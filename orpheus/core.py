@@ -404,4 +404,14 @@ def orpheus_core_download(orpheus_session: Orpheus, media_to_download, third_par
                 else:
                     raise Exception(f'\tUnknown media type "{mediatype}"')
 
-    if os.path.exists('temp'): shutil.rmtree('temp')
+    # Safe temp cleanup for Windows (preventing permission error/locked files crash)
+    from pathlib import Path
+    temp_dir = Path(__file__).parent.parent / "temp"
+    if temp_dir.exists():
+        import gc, time
+        gc.collect()
+        time.sleep(0.5)
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass

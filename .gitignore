@@ -9,3 +9,10 @@ temp/
 .python-version
 modules/
 extensions/
+
+# Personal/Temporary files and logs in workspace root
+/OrpheusDL-master/
+/*.csv
+/*.log
+/*_log.txt
+/*.json

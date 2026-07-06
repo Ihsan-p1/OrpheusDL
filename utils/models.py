@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Flag, auto
 from types import ClassMethodDescriptorType, FunctionType
-from typing import Optional
+from typing import Optional, Union
 
 from utils.utils import read_temporary_setting, set_temporary_setting
 
@@ -67,6 +67,8 @@ class SearchResult:
     year: Optional[str] = None
     explicit: Optional[bool] = False
     duration: Optional[int] = None  # Duration in whole seconds
+    image_url: Optional[str] = None
+    preview_url: Optional[str] = None
     additional: Optional[list] = None
     extra_kwargs: Optional[dict] = field(default_factory=dict)
 
@@ -120,7 +122,7 @@ class TemporarySettingsController:
         else:
             raise Exception('Invalid temporary setting requested')
 
-    def set(self, setting: str, value: str or object, setting_type='custom'):
+    def set(self, setting: str, value: Union[str, object], setting_type='custom'):
         if setting_type == 'custom':
             set_temporary_setting(self.settings_location, self.module, 'custom_data', setting, value)
         elif setting_type == 'global':
@@ -162,7 +164,7 @@ class ModuleInformation:
     session_settings: Optional[dict] = field(default_factory=dict)
     session_storage_variables: Optional[list] = None
     flags: Optional[ModuleFlags] = field(default_factory=dict)
-    netlocation_constant: Optional[str] or Optional[list] = field(default_factory=list) # not sure if this works with python 3.7/3.8
+    netlocation_constant: Optional[Union[str, list]] = field(default_factory=list) # not sure if this works with python 3.7/3.8
     # note that by setting netlocation_constant to setting.X, it will use that setting instead
     url_constants: Optional[dict] = None
     test_url: Optional[str] = None
@@ -261,6 +263,7 @@ class Tags:
     description: Optional[str] = None
     comment: Optional[str] = None
     label: Optional[str] = None
+    track_url: Optional[str] = None
     extra_tags: Optional[dict] = field(default_factory=dict)
 
 
@@ -300,6 +303,10 @@ class AlbumInfo:
     all_track_cover_jpg_url: Optional[str] = None
     animated_cover_url: Optional[str] = None
     description: Optional[str] = None
+    album_artist: Optional[str] = None
+    id: Optional[str] = None
+    label: Optional[str] = None
+    expected_track_count: Optional[int] = None
     track_extra_kwargs: Optional[dict] = field(default_factory=dict)
 
 
@@ -310,6 +317,7 @@ class ArtistInfo:
     album_extra_kwargs: Optional[dict] = field(default_factory=dict)
     tracks: Optional[list] = field(default_factory=list)
     track_extra_kwargs: Optional[dict] = field(default_factory=dict)
+    artist_id: Optional[str] = None
 
 
 @dataclass
@@ -351,6 +359,7 @@ class TrackInfo:
     credits_extra_kwargs: Optional[dict] = field(default_factory=dict)
     lyrics_extra_kwargs: Optional[dict] = field(default_factory=dict)
     error: Optional[str] = None
+    id: Optional[str] = None
 
 
 @dataclass

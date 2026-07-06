@@ -31,3 +31,20 @@ class ModuleSettingsNotSet(Exception):
 
 class TagSavingFailure(Exception):
     pass
+
+# ── Additional exceptions required by Apple Music module (bascurtiz fork) ──
+
+class AuthenticationError(Exception):
+    """Raised when authentication fails (e.g. invalid/expired cookies)."""
+    def __init__(self, message: str = 'Authentication failed'):
+        super().__init__(message)
+
+class DownloadError(Exception):
+    """Raised when a download fails for a non-auth reason."""
+    def __init__(self, message: str = 'Download failed'):
+        super().__init__(message)
+
+class TrackUnavailableError(Exception):
+    """Raised when a track is not available (geo-restriction, removed, etc.)."""
+    def __init__(self, message: str = 'Track unavailable'):
+        super().__init__(message)

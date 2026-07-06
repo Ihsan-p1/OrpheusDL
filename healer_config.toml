@@ -1,0 +1,99 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  healer_config.toml — Konfigurasi untuk Orpheus Healer v2.0
+#  Edit file ini sesuai path dan preferensi kamu.
+#  Script akan auto-reload config ini setiap dijalankan.
+# ═══════════════════════════════════════════════════════════════════════════
+
+[paths]
+# Path ke file CSV dari Soniq Tools (File → Export → CSV)
+soniq_csv     = 'D:\College Project\music\OrpheusDL-master\soniqtools-batch-2026-07-04.csv'
+
+# Folder tempat FLAC tersimpan (yang dianalisis Soniq Tools)
+music_folder  = 'D:\Music\New folder (2)\Mix\MIXING'
+
+# Folder root OrpheusDL (tempat orpheus.py berada)
+orpheus_dir   = 'D:\College Project\music\OrpheusDL-master'
+
+# Folder backup untuk file fake (jika delete_fake_files = false)
+backup_folder = 'D:\Music\New folder (2)\Mix\MIXING\_FAKE_BACKUP'
+
+# File log (auto-rotate: max 5MB × 3 file)
+log_file      = 'orpheus_healer_log.txt'
+
+
+[settings]
+# Delay antar track (detik) — hindari rate limit
+delay_between_downloads = 3
+
+# true = hapus file fake, false = backup ke backup_folder
+delete_fake_files = false
+
+# Verdict Soniq yang dianggap bermasalah
+# Hapus/komentari item yang tidak ingin di-redownload
+bad_verdicts = [
+    "Upsampled / Transcoded",
+    "Lossy Transcode",
+    "Low-Bitrate Lossy",
+    "Possibly Upsampled",   # file upscaling/fake lossless → ganti ke AAC asli
+    "Error",
+]
+
+# Tag metadata yang di-preserve dari file asli ke file baru
+preserve_tags = [
+    "comment",
+    "rating",
+    "fmps_rating",
+    "fmps_playcount",
+    "replaygain_track_gain",
+    "replaygain_track_peak",
+    "replaygain_album_gain",
+    "replaygain_album_peak",
+    "lyrics",
+    "musicbrainz_trackid",
+]
+
+
+# ── SOURCE PRIORITY ──────────────────────────────────────────────────────────
+# Urutan source yang dicoba jika track masih fake setelah download.
+# Module harus terinstall di modules/ dan sudah login!
+# Install: git clone <repo> modules/<nama>
+# Set enabled = true untuk mengaktifkan.
+
+[[source_priority]]
+module  = "tidal"
+label   = "Tidal HiFi"
+enabled = true
+
+[[source_priority]]
+module  = "qobuz"
+label   = "Qobuz"
+enabled = false   # set true jika punya akun Qobuz
+
+[[source_priority]]
+module  = "deezer"
+label   = "Deezer HiFi"
+enabled = false   # set true jika punya akun Deezer
+
+[[source_priority]]
+module  = "applemusic"   # folder: modules/applemusic
+label   = "Apple Music"
+enabled = true
+
+[[source_priority]]
+module  = "amazon"
+label   = "Amazon Music HD"
+enabled = false
+
+
+# ── QUALITY SCORE ────────────────────────────────────────────────────────────
+# Skor untuk memilih "yang paling bagus" jika semua source menghasilkan fake.
+# Semakin tinggi = semakin baik.
+[quality_score]
+"True High-Resolution Audio"          = 120
+"Standard Quality (CD / Near-CD)"     = 100
+"Natural Rolloff (Vintage Recording)" = 95
+"Possibly Upsampled"                  = 70
+"Upsampled / Transcoded"              = 40
+"Lossy Transcode"                     = 20
+"Unknown"                             = 10
+"Error"                               = 0
