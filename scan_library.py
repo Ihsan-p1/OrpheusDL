@@ -133,7 +133,34 @@ def rows_from_csv(path: str) -> list[dict]:
     return rows
 
 
-def summarize(rows: list[dict]) -> None:
+DEFAULT_EXCLUSION_FILE = "no_lossless_source.txt"
+
+
+def read_exclusions(path: str) -> set[str]:
+    """Baca daftar file yang memang tidak punya sumber lossless di mana pun.
+
+    Isinya nama file, satu per baris, tanda # untuk komentar. Pencocokan lewat
+    nama file dan bukan path utuh, supaya daftar yang sama berlaku untuk salinan
+    library di drive lain. Keanggotaan daftar ini keputusan manusia: tidak ada
+    cara mengukur ketiadaan sumber lossless dari file itu sendiri.
+    """
+    if not path or not Path(path).is_file():
+        return set()
+    names = set()
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            names.add(Path(line).name.lower())
+    return names
+
+
+def summarize(rows: list[dict], exclusions: set[str] | None = None) -> None:
+    exclusions = exclusions or set()
+    if exclusions:
+        excluded = [r for r in rows if Path(r["path"]).name.lower() in exclusions]
+        rows = [r for r in rows if Path(r["path"]).name.lower() not in exclusions]
+        print(f"{len(excluded)} file dikecualikan dari rasio: tidak ada sumber lossless-nya")
+
     total = len(rows)
     if not total:
         print("Tidak ada file audio ditemukan.")
@@ -184,6 +211,8 @@ def main() -> int:
     parser.add_argument("--target-dir", help="Folder yang dipindai, rekursif")
     parser.add_argument("--csv", default="scan_library_report.csv", help="Berkas CSV hasil")
     parser.add_argument("--from-csv", help="Lewati pemindaian, cetak ringkasan dari CSV ini")
+    parser.add_argument("--exclusion-list", default=DEFAULT_EXCLUSION_FILE,
+                        help="Daftar file tanpa sumber lossless, dikecualikan dari rasio")
     parser.add_argument("--workers", type=int, default=0,
                         help="Jumlah proses paralel. 0 memakai default ProcessPoolExecutor")
     parser.add_argument("--limit", type=int, default=0, help="Berhenti setelah N file, untuk uji cepat")
@@ -193,8 +222,10 @@ def main() -> int:
     # seluruh pemindaian selesai lalu mati saat mencetak baris pertama.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    exclusions = read_exclusions(args.exclusion_list)
+
     if args.from_csv:
-        summarize(rows_from_csv(args.from_csv))
+        summarize(rows_from_csv(args.from_csv), exclusions)
         return 0
 
     if not args.target_dir:
@@ -230,7 +261,7 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
 
-    summarize(rows)
+    summarize(rows, exclusions)
     print(f"\nCSV: {Path(args.csv).resolve()}")
     return 0
 
