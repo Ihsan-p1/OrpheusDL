@@ -2,10 +2,12 @@ import logging, os, ffmpeg, sys
 import shutil
 import unicodedata
 from dataclasses import asdict
+from datetime import datetime, timezone
 from time import strftime, gmtime
 
 from ffmpeg import Error
 
+from orpheus.provenance import ORPHEUS_VERSION, Provenance, write_provenance
 from orpheus.tagging import tag_file
 from utils.models import *
 from utils.utils import *
@@ -311,6 +313,10 @@ class Downloader:
         track_tags['explicit'] = ' [E]' if track_info.explicit else ''
         track_tags['artist'] = sanitise_name(track_info.artists[0])  # if len(track_info.artists) == 1 else 'Various Artists'
         codec = track_info.codec
+        # codec = apa yang dikirim modul, final_codec = hasil setelah codec_conversions.
+        # Dua-duanya dicatat: ALAC yang dikonversi ke FLAC tetap lossless, AAC yang
+        # dibungkus jadi FLAC tidak.
+        final_codec = codec
 
         self.set_indent_number(indent_level)
         self.print(f'=== Downloading track {track_info.name} ({track_id}) ===', drop_level=1)
@@ -612,8 +618,9 @@ class Downloader:
                 else:
                     silentremove(track_location)
 
-                container = new_codec_data.container    
+                container = new_codec_data.container
                 track_location = new_track_location
+                final_codec = new_codec
 
         # Add the playlist track to the m3u playlist
         if m3u_playlist:
@@ -627,6 +634,25 @@ class Downloader:
             if old_track_location:
                 tag_file(old_track_location, cover_temp_location if self.global_settings['covers']['embed_cover'] else None,
                          track_info, credits_list, embedded_lyrics, old_container)
+
+            provenance = Provenance(
+                source_module=self.service_name,
+                quality_tier=quality_tier.name,
+                codec_served=codec.name.lower(),
+                codec_final=final_codec.name.lower(),
+                downloaded_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
+                orpheus_version=ORPHEUS_VERSION,
+                bitrate_kbps=track_info.bitrate,
+                sample_rate=int(track_info.sample_rate * 1000) if track_info.sample_rate else None,
+                bit_depth=track_info.bit_depth,
+            )
+            try:
+                write_provenance(track_location, container, provenance)
+                if old_track_location:
+                    write_provenance(old_track_location, old_container, provenance)
+            except Exception as e:
+                # Provenance gagal ditulis tidak boleh membatalkan unduhan yang sudah jadi
+                self.print(f'Warning: provenance tidak tertulis: {e}')
         except TagSavingFailure:
             self.print('Tagging failed, tags saved to text file')
         if delete_cover:
