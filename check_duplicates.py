@@ -26,9 +26,8 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 sys.path.append(str(Path(__file__).parent))
 
 try:
+    from quality_probe import inspect
     from orpheus_healer import (
-        analyze_flac_quality,
-        _VERDICT_SCORE,
         _DUP_MARKER_RE,
         _normalize_for_dedup,
         NUMPY_AVAILABLE,
@@ -83,55 +82,67 @@ def normalize_for_grouping(filename: str) -> str:
     # 2. Panggil normalisasi bawaan orpheus_healer (yang akan menghapus dup markers, lowercase, dll)
     return _normalize_for_dedup(stem_no_ts + path.suffix)
 
+_STATUS_RANK = {"verified": 3, "unknown": 2, "suspect": 1, "corrupt": 0}
+
+
 def get_file_quality_score(file_path: Path) -> tuple:
+    """Tuple untuk mengurutkan duplikat. Makin besar makin dipilih.
+
+    Provenance menang lebih dulu, lalu bit depth, lalu ukuran file. Ukuran file
+    jadi penentu terakhir karena dua file lossless dengan isi sama seharusnya
+    berukuran mirip, dan yang lebih besar biasanya yang tidak terpotong.
+
+    Elemen terakhir adalah dict untuk ditampilkan, bukan untuk diurutkan.
     """
-    Menganalisis file dan mengembalikan tuple scoring untuk sorting:
-    (verdict_score, bandwidth_pct, bit_depth, sample_rate_bonus, has_no_marker, file_size, filename_len)
-    """
-    size_bytes = 0
     try:
         size_bytes = file_path.stat().st_size
-    except Exception:
-        pass
+    except OSError:
+        size_bytes = 0
 
-    # Analisis menggunakan engine orpheus_healer
-    analysis = analyze_flac_quality(str(file_path))
-    verdict = analysis.get("verdict", "Unknown")
-    
-    # Hitung skor berdasarkan verdict
-    vs = _VERDICT_SCORE.get(verdict, 10)
-    bw = analysis.get("bandwidth_pct") or 0.0
-    bd = analysis.get("bit_depth") or 0
-    sr = analysis.get("sample_rate") or 0.0
-    
-    # Tambahan bonus untuk rate standar CD (44.1kHz) agar tidak bias ke upscaled hires
-    sr_khz = sr / 1000.0
-    sr_bonus = 0.5 if abs(sr_khz - 44.1) < 0.5 else 0.0
-    
-    # Deteksi apakah nama file asli mengandung marker duplikat (kita lebih memilih yang bersih)
-    has_marker = 1 if _DUP_MARKER_RE.search(file_path.name) or _TIMESTAMP_RE.search(file_path.name) else 0
-    has_no_marker = 1 - has_marker
+    status, measurement, prov = inspect(str(file_path))
 
-    # tuple scoring:
-    # 1. Verdict score (tinggi = baik)
-    # 2. Bandwidth % (tinggi = baik)
-    # 3. Bit depth (tinggi = baik)
-    # 4. Sample rate bonus (prefer CD standard jika setara)
-    # 5. Has no duplicate marker (1 jika bersih, 0 jika ada marker)
-    # 6. File size (tinggi = baik, sebagai tie-breaker)
-    # 7. Filename length (lebih pendek = baik, sebagai tie-breaker)
-    return (vs, bw, bd, sr_bonus, has_no_marker, size_bytes, -len(file_path.name), analysis)
+    status_rank = _STATUS_RANK.get(status, 0)
+    provenance_rank = 1 if prov is not None else 0
+    bit_depth = measurement.effective_bit_depth or 0
+    sample_rate = measurement.sample_rate or 0
+    sr_bonus = 0.5 if abs(sample_rate / 1000.0 - 44.1) < 0.5 else 0.0
+    has_marker = 1 if (_DUP_MARKER_RE.search(file_path.name)
+                       or _TIMESTAMP_RE.search(file_path.name)) else 0
 
-def colorize_verdict(verdict: str) -> str:
-    if any(v in verdict for v in ["Lossy", "Upsampled", "Error", "Low-Bitrate"]):
-        return f"{Colors.RED}{verdict}{Colors.RESET}"
-    elif "Possibly" in verdict or "no spectral" in verdict:
-        return f"{Colors.YELLOW}{verdict}{Colors.RESET}"
-    elif "Standard" in verdict or "Natural" in verdict:
-        return f"{Colors.GREEN}{verdict}{Colors.RESET}"
-    elif "True High" in verdict:
-        return f"{Colors.CYAN}{verdict}{Colors.RESET}"
-    return verdict
+    display = {
+        "status": status,
+        "reasons": measurement.reasons,
+        "cutoff_hz": measurement.cutoff_hz,
+        "sample_rate": sample_rate,
+        "bit_depth": bit_depth,
+        "provenance": f"{prov.source_module}/{prov.codec_served}" if prov else None,
+    }
+
+    return (status_rank, provenance_rank, bit_depth, sr_bonus,
+            1 - has_marker, size_bytes, -len(file_path.name), display)
+
+
+def colorize_status(status: str) -> str:
+    if status in ("suspect", "corrupt"):
+        return f"{Colors.RED}{status}{Colors.RESET}"
+    if status == "verified":
+        return f"{Colors.GREEN}{status}{Colors.RESET}"
+    return f"{Colors.YELLOW}{status}{Colors.RESET}"
+
+
+def _quality_line(display: dict) -> str:
+    """Satu baris ringkasan kualitas untuk ditampilkan."""
+    sr = display.get("sample_rate") or 0
+    sr_str = f"{sr/1000:.1f}kHz" if sr else "?"
+    bd = display.get("bit_depth") or 0
+    bd_str = f"{bd}bit" if bd else "?"
+    co = display.get("cutoff_hz")
+    co_str = f" tebing {co/1000:.1f}kHz" if co is not None else ""
+    src = display.get("provenance")
+    src_str = f" | {src}" if src else ""
+    return f"{colorize_status(display.get('status', '?'))} ({sr_str}/{bd_str}{co_str}){src_str}"
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Audio Quality Duplicate Checker")
@@ -206,11 +217,11 @@ def main():
             group_entries.append({
                 "path": fp,
                 "score_tuple": score_tuple,
-                "analysis": score_tuple[-1]
+                "display": score_tuple[-1]
             })
             
         # Sort group entries so the best is at the end (max)
-        group_entries.sort(key=lambda x: x["score_tuple"])
+        group_entries.sort(key=lambda x: x["score_tuple"][:-1])
         best_entry = group_entries[-1]
         other_entries = group_entries[:-1]
         
@@ -227,42 +238,27 @@ def main():
     
     for idx, group in enumerate(analyzed_groups, 1):
         best_fp = group["best"]["path"]
-        best_analysis = group["best"]["analysis"]
+        best_display = group["best"]["display"]
         canonical_name = get_canonical_name(best_fp.name)
         
         print(f"\n[Grup {idx}] Base: {Colors.BOLD}{group['norm_name']}{Colors.RESET}")
         
         # Print the best file (KEEP)
-        sr = best_analysis.get("sample_rate")
-        sr_str = f"{sr/1000:.1f}kHz" if sr else "?"
-        bd = best_analysis.get("bit_depth")
-        bd_str = f"{bd}bit" if bd else "?"
-        bw = best_analysis.get("bandwidth_pct")
-        bw_str = f"BW:{bw}%" if bw is not None else ""
-        verdict = colorize_verdict(best_analysis.get("verdict", "Unknown"))
         size_mb = best_fp.stat().st_size / (1024*1024) if best_fp.exists() else 0.0
-        
+
         print(f"  {Colors.GREEN}[KEEP]{Colors.RESET} {best_fp.name}")
-        print(f"         Quality  : {verdict} ({sr_str}/{bd_str} {bw_str}) | Size: {size_mb:.2f} MB")
+        print(f"         Quality  : {_quality_line(best_display)} | Size: {size_mb:.2f} MB")
         if best_fp.name != canonical_name:
             print(f"         Rename to: {Colors.CYAN}{canonical_name}{Colors.RESET}")
             
         # Print files to remove
         for entry in group["others"]:
             fp = entry["path"]
-            analysis = entry["analysis"]
-            sr = analysis.get("sample_rate")
-            sr_str = f"{sr/1000:.1f}kHz" if sr else "?"
-            bd = analysis.get("bit_depth")
-            bd_str = f"{bd}bit" if bd else "?"
-            bw = analysis.get("bandwidth_pct")
-            bw_str = f"BW:{bw}%" if bw is not None else ""
-            verdict = colorize_verdict(analysis.get("verdict", "Unknown"))
             size_mb = fp.stat().st_size / (1024*1024) if fp.exists() else 0.0
-            
+
             action_label = f"{Colors.RED}[DELETE]{Colors.RESET}" if args.delete else f"{Colors.YELLOW}[BACKUP]{Colors.RESET}"
             print(f"  {action_label} {fp.name}")
-            print(f"         Quality  : {verdict} ({sr_str}/{bd_str} {bw_str}) | Size: {size_mb:.2f} MB")
+            print(f"         Quality  : {_quality_line(entry['display'])} | Size: {size_mb:.2f} MB")
             
     print("\n" + "="*70)
     
