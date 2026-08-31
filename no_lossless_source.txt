@@ -1,0 +1,28 @@
+# File yang tidak punya sumber lossless di mana pun.
+# Baris di sini dikeluarkan dari denominator rasio FLAC / ALAC oleh
+# scan_library.py. Pencocokan lewat nama file, bukan path.
+#
+# Isi awal: setiap file lossy yang terukur di F:\sorted, diurut dari
+# bitrate terendah. Hapus baris mana pun yang sumber lossless-nya ternyata
+# ada, karena file itu seharusnya diperbaiki, bukan dikecualikan.
+
+act ii · date @ 8 (feat. Drake) [remix].m4a  # eac3 ? kbps
+- Official髭男dism · Cry baby.m4a  # aac 96 kbps
+8Ball & MJG - We Started This.m4a  # aac 96 kbps
+Newcleus - Jam On Revenge (The Wikki Wikki Song).m4a  # aac 96 kbps
+The Neighbourhood - Sweater Weather (Official Video) (Audio from video).m4a  # aac 96 kbps
+- Official髭男dism · Cry baby.m4a  # aac 96 kbps
+8Ball & MJG - We Started This.m4a  # aac 96 kbps
+Akuma No Ko 悪魔の子 (English Cover).m4a  # aac 256 kbps
+Bang on Em (feat. Creepy Loc, Tyson Takeover & Kaibee).m4a  # aac 256 kbps
+Mrs. GREEN APPLE Best Hits Medley (A Cappella Cover) [feat. Shimo-Ren, こせ, つぼしゅん, しらスタ, たすくこま, 大島真帆, おかのやともか & 藤元 脩平 (AunJi)].m4a  # aac 256 kbps
+21 Days Main Theme (Theme Song from Variety Show the House of Games).m4a  # aac 256 kbps
+Amanojaku (Piano Solo).m4a  # aac 256 kbps
+Angel’s Egg · Main Theme.m4a  # aac 256 kbps
+Jam On Revenge (The Wikki Wikki Song).m4a  # aac 256 kbps
+Kanata Haluka (From Radwimps) [Piano Version].m4a  # aac 256 kbps
+Organ Sonata No. 4, BWV 528 · II. Andante [Adagio] (Transcr. by August Stradal).m4a  # aac 256 kbps
+Pergi.m4a  # aac 256 kbps
+Samurai Heart (Some Like It Hot!!) [from Gintama_) [Piano Version].m4a  # aac 256 kbps
+Tears of Suzume · Piano Version (From Suzume).m4a  # aac 256 kbps
+The Path of the Wind (From My Neighbor Totoro).m4a  # aac 256 kbps
