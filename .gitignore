@@ -16,3 +16,4 @@ extensions/
 /*.log
 /*_log.txt
 /*.json
+/ground_truth/
