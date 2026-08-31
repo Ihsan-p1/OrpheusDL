@@ -29,7 +29,7 @@ Fixes v2.1 (on top of v2.0):
   [FIX-F2]  Bare except -> semua pakai except Exception as e dengan logging
   [FIX-F3]  isinstance check yang benar (bukan 'is list')
   [FIX-F8]  Mutable default args {} -> pakai None default
-  [FIX-F9]  is_truly_lossless verdict matching yang benar
+  [2026-08]  Verdict spektral diganti quality_probe.inspect (status terukur)
   [FIX-M3]  File handle leaks -> semua pakai 'with open(...) as f:'
   [FIX-M5]  sys.exit() bukan exit() untuk production code
   [NEW-DUP] Duplicate detection dengan preview & user confirmation
@@ -49,6 +49,8 @@ from pathlib import Path
 from datetime import datetime
 from difflib import SequenceMatcher
 from logging.handlers import RotatingFileHandler
+
+from quality_probe import inspect
 
 # ── Fallback tomllib for Python < 3.11 ───────────────────────────────────────
 try:
@@ -96,7 +98,8 @@ _DEFAULT_CONFIG = {
     "settings": {
         "delay_between_downloads": 3,
         "delete_fake_files": False,
-        "bad_verdicts": ["Upsampled / Transcoded", "Lossy Transcode", "Low-Bitrate Lossy", "Error"],
+        "soniq_flags": ["Upsampled / Transcoded", "Lossy Transcode", "Low-Bitrate Lossy", "Error"],
+        "redownload_status": ["suspect", "corrupt"],
         "preserve_tags": [
             "comment", "rating", "fmps_rating", "fmps_playcount",
             "replaygain_track_gain", "replaygain_track_peak",
@@ -111,16 +114,6 @@ _DEFAULT_CONFIG = {
         {"module": "applemusic",  "label": "Apple Music",     "enabled": False},
         {"module": "amazon",      "label": "Amazon Music HD", "enabled": False},
     ],
-    "quality_score": {
-        "True High-Resolution Audio":          120,
-        "Standard Quality (CD / Near-CD)":     100,
-        "Natural Rolloff (Vintage Recording)":  95,
-        "Possibly Upsampled":                   70,
-        "Upsampled / Transcoded":               40,
-        "Lossy Transcode":                      20,
-        "Unknown":                              10,
-        "Error":                                 0,
-    },
 }
 
 
@@ -134,7 +127,6 @@ def load_config() -> dict:
                 "paths":           {**_DEFAULT_CONFIG["paths"],    **toml.get("paths", {})},
                 "settings":        {**_DEFAULT_CONFIG["settings"], **toml.get("settings", {})},
                 "source_priority": toml.get("source_priority", _DEFAULT_CONFIG["source_priority"]),
-                "quality_score":   {**_DEFAULT_CONFIG["quality_score"], **toml.get("quality_score", {})},
             }
             return cfg
         except Exception as e:   # [FIX-F2]
@@ -250,7 +242,7 @@ def _parse_filename(filepath: str) -> tuple[str, list[str]]:
     return title, artists
 
 
-def parse_soniq_csv(csv_path: str, bad_verdicts: list[str]) -> list[dict]:
+def parse_soniq_csv(csv_path: str, soniq_flags: list[str]) -> list[dict]:
     """[S11] Parse CSV Soniq Tools dan kembalikan daftar track bermasalah."""
     valid, errors = validate_csv_columns(csv_path)
     if not valid:
@@ -274,7 +266,7 @@ def parse_soniq_csv(csv_path: str, bad_verdicts: list[str]) -> list[dict]:
 
         for row in reader:
             verdict = row.get("Verdict", "").strip()
-            if not any(bv.lower() in verdict.lower() for bv in bad_verdicts):
+            if not any(flag.lower() in verdict.lower() for flag in soniq_flags):
                 continue
 
             filepath = row.get("File", "").strip()
@@ -308,25 +300,13 @@ def parse_soniq_csv(csv_path: str, bad_verdicts: list[str]) -> list[dict]:
     lossy_tracks = [t for t in bad_tracks if t["format"] not in ("FLAC", "")]
     if lossy_tracks:
         log.info(f"  [CSV] {len(lossy_tracks)} file non-FLAC — akan di-redownload sebagai FLAC")
-    log.info(f"Ditemukan {len(bad_tracks)} track bermasalah dari {len(bad_verdicts)} verdict category.")
+    log.info(f"Ditemukan {len(bad_tracks)} track kandidat dari {len(soniq_flags)} verdict Soniq.")
     return bad_tracks
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  [NEW-DUP] DUPLICATE DETECTION & USER CONFIRMATION
 # ═══════════════════════════════════════════════════════════════════════════
-
-# Quality score untuk memilih versi terbaik dari duplicate group
-_VERDICT_SCORE: dict[str, int] = {
-    "True High-Resolution Audio":          120,
-    "Standard Quality (CD / Near-CD)":     100,
-    "Natural Rolloff (Vintage Recording)":  95,
-    "Possibly Upsampled":                   70,
-    "Upsampled / Transcoded":               40,
-    "Lossy Transcode":                      20,
-    "Low-Bitrate Lossy":                    10,
-    "Error":                                 0,
-}
 
 # Regex untuk marker yang menandai "versi cadangan" di nama file
 _DUP_MARKER_RE = re.compile(
@@ -352,14 +332,6 @@ def _normalize_for_dedup(filename: str) -> str:
     normalized = re.sub(r"[^\x20-\x7E\u00C0-\u024F\u4E00-\u9FFF\u3000-\u303F\u3040-\u30FF]",
                         "", normalized)
     return re.sub(r"\s{2,}", " ", normalized).strip()
-
-
-def _get_verdict_score(verdict: str) -> int:
-    """Ambil skor kualitas dari verdict string."""
-    for key, score in _VERDICT_SCORE.items():
-        if key.lower() in verdict.lower():
-            return score
-    return -1
 
 
 def _parse_bw(bw_val) -> float:
@@ -407,16 +379,18 @@ def detect_duplicates_from_csv(all_rows: list[dict]) -> list[list[dict]]:
 def _pick_best_in_group(group: list[dict]) -> dict:
     """
     Pilih entri terbaik dari satu grup duplikat.
-    Prioritas: verdict score -> bandwidth -> bit depth
+    Prioritas: bit depth -> bandwidth -> sample rate.
+
+    Kolom verdict Soniq tidak dipakai di sini. Yang dipakai cuma kolom yang
+    berisi pengukuran, karena kesimpulan Soniq tidak bisa kita audit.
     """
     def _sort_key(entry):
-        vs = _get_verdict_score(entry.get("verdict", ""))
         bw = _parse_bw(entry.get("bandwidth"))
         bd = _parse_bd(entry.get("bit_depth"))
         sr = _parse_sr(entry.get("sample_rate"))
         # Slight bonus for CD-standard 44.1 vs potentially-upsampled hi-res
         sr_bonus = 0.5 if abs(sr - 44.1) < 0.5 else 0.0
-        return (vs, bw, bd, sr_bonus)
+        return (bd, bw, sr_bonus)
 
     return max(group, key=_sort_key)
 
@@ -812,161 +786,6 @@ def handle_fake_file(track: dict, delete: bool, backup_folder: str) -> bool:
 #  [C2] STEP 3b: BUILT-IN FLAC SPECTRAL ANALYZER
 # ═══════════════════════════════════════════════════════════════════════════
 
-_THRESHOLDS = {
-    "standard_bw_min":       92.0,
-    "borderline_bw_min":     72.0,
-    "lossy_slope_threshold": -4.5,
-    "upsampled_bw_max":      62.0,
-    "hires_cutoff_min":      24000,
-}
-
-
-def _compute_rolloff_slope(fft_db: "np.ndarray", freqs: "np.ndarray",
-                            f_low: float, f_high: float) -> float:
-    """Hitung rata-rata slope (dB/kHz) di range frekuensi tertentu."""
-    mask    = (freqs >= f_low) & (freqs <= f_high)
-    f_range = freqs[mask]
-    db_range = fft_db[mask]
-    if len(f_range) < 2:
-        return 0.0
-    x = f_range / 1000.0
-    y = db_range
-    n = len(x)
-    denom = n * (x**2).sum() - x.sum()**2
-    if abs(denom) < 1e-9:
-        return 0.0
-    return float((n * (x * y).sum() - x.sum() * y.sum()) / denom)
-
-
-def analyze_flac_quality(file_path: str, n_samples: int = 131072) -> dict:
-    """[C2] Analisis kualitas FLAC via FFT spectral + rolloff slope."""
-    result = {
-        "verdict":       "Unknown",
-        "cutoff_hz":     None,
-        "bandwidth_pct": None,
-        "sample_rate":   None,
-        "bit_depth":     None,
-        "method":        "none",
-        "rolloff_slope": None,
-        "confidence":    "low",
-        "error":         None,
-    }
-
-    if not os.path.exists(file_path):
-        result["error"]   = "File tidak ditemukan"
-        result["verdict"] = "Error"
-        return result
-
-    if NUMPY_AVAILABLE:
-        try:
-            result["method"] = "spectral"
-
-            with sf.SoundFile(file_path) as af:
-                sr           = af.samplerate
-                total_frames = len(af)
-                result["sample_rate"] = sr
-
-                start  = max(0, total_frames // 2 - n_samples // 2)
-                af.seek(start)
-                n_read  = min(n_samples, total_frames - start)
-                samples = af.read(n_read, dtype="float32")
-                if af.channels > 1:
-                    samples = samples.mean(axis=1)
-
-            if len(samples) < 1024:
-                result["error"]   = "File terlalu pendek"
-                result["verdict"] = "Too Short"
-                return result
-
-            nyquist  = sr / 2.0
-            window   = np.hanning(len(samples))
-            fft_data = np.abs(np.fft.rfft(samples * window))
-            fft_db   = 20 * np.log10(np.maximum(fft_data, 1e-6))
-            fft_db  -= fft_db.max()
-            freqs    = np.fft.rfftfreq(len(samples), d=1.0 / sr)
-
-            above        = np.where(fft_db >= -80.0)[0]
-            cutoff_hz    = float(freqs[above[-1]]) if len(above) > 0 else 0.0
-            bandwidth_pct = (cutoff_hz / nyquist) * 100.0
-
-            result["cutoff_hz"]     = round(cutoff_hz, 0)
-            result["bandwidth_pct"] = round(bandwidth_pct, 1)
-
-            if MUTAGEN_AVAILABLE:
-                try:
-                    result["bit_depth"] = MutagenFLAC(file_path).info.bits_per_sample
-                except Exception:
-                    pass
-
-            t = _THRESHOLDS
-            if sr >= 88200:
-                if cutoff_hz >= t["hires_cutoff_min"] and bandwidth_pct > t["upsampled_bw_max"]:
-                    result["verdict"], result["confidence"] = "True High-Resolution Audio", "high"
-                else:
-                    result["verdict"], result["confidence"] = "Upsampled / Transcoded", "high"
-
-            elif sr in (44100, 48000):
-                if bandwidth_pct >= t["standard_bw_min"]:
-                    v = "Standard Quality (CD / Near-CD)" if sr == 44100 else "Possibly Upsampled"
-                    result["verdict"], result["confidence"] = v, "high"
-                elif bandwidth_pct >= t["borderline_bw_min"]:
-                    f_low  = min(14000.0, cutoff_hz * 0.7)
-                    f_high = min(20000.0, cutoff_hz * 0.98)
-                    slope  = _compute_rolloff_slope(fft_db, freqs, f_low, f_high)
-                    result["rolloff_slope"] = round(slope, 3)
-                    if slope >= t["lossy_slope_threshold"]:
-                        result["verdict"], result["confidence"] = "Natural Rolloff (Vintage Recording)", "medium"
-                    else:
-                        result["verdict"], result["confidence"] = "Lossy Transcode", "high"
-                else:
-                    result["verdict"], result["confidence"] = "Lossy Transcode", "high"
-            else:
-                result["verdict"], result["confidence"] = "Unknown Sample Rate", "low"
-
-            return result
-
-        except Exception as e:   # [FIX-F2]
-            result["method"] = "spectral_failed"
-            result["error"]  = str(e)
-            log.debug(f"  [ANALYZER] Spectral failed: {e}")
-
-    if MUTAGEN_AVAILABLE:
-        try:
-            result["method"] = "metadata_only"
-            meta = MutagenFLAC(file_path)
-            result["sample_rate"] = meta.info.sample_rate
-            result["bit_depth"]   = meta.info.bits_per_sample
-            result["confidence"]  = "low"
-            sr, bd = meta.info.sample_rate, meta.info.bits_per_sample
-            if sr >= 88200 and bd >= 24:
-                result["verdict"] = "Possibly Hi-Res (no spectral check)"
-            elif sr <= 48000 and bd <= 16:
-                result["verdict"] = "Standard Quality (no spectral check)"
-            else:
-                result["verdict"] = "Unknown (no spectral check)"
-            return result
-        except Exception as e:   # [FIX-F2]
-            result["error"] = str(e)
-
-    result["method"]  = "unavailable"
-    result["verdict"] = "Cannot verify (pip install numpy soundfile mutagen)"
-    return result
-
-
-def is_truly_lossless(analysis: dict) -> bool:
-    """[FIX-F9] Returns True jika verdict dianggap kualitas yang acceptable."""
-    good_verdicts = [
-        "Standard Quality (CD / Near-CD)",
-        "True High-Resolution Audio",
-        "Natural Rolloff (Vintage Recording)",
-        "Possibly Upsampled",
-        "Possibly Hi-Res (no spectral check)",
-        "Standard Quality (no spectral check)",
-    ]
-    verdict = analysis.get("verdict", "")
-    return any(v in verdict for v in good_verdicts)
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 #  [C1] SNAPSHOT-BASED FILE DETECTION
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1168,13 +987,18 @@ def redownload_with_fallback(
     preserved_tags: dict,
     output_folder: str | None = None,     # [FIX-F8]
     valid_sources: list | None = None,    # [FIX-F8]
-    quality_score: dict | None = None,    # [FIX-F8]
+    reject_status: list | None = None,
 ) -> dict:
-    """Download ulang dengan multi-source fallback + spectral verify."""
+    """Download ulang dengan multi-source fallback, lalu ukur hasilnya.
+
+    File diterima kecuali status pengukurannya ada di reject_status. Status
+    "unknown" diterima: sistem ini tidak menolak file cuma karena tidak bisa
+    membuktikan apa-apa tentangnya.
+    """
     if valid_sources is None:
         valid_sources = []
-    if quality_score is None:
-        quality_score = CONFIG["quality_score"]
+    if reject_status is None:
+        reject_status = CONFIG["settings"]["redownload_status"]
 
     search_dir = output_folder or music_folder
     attempts   = []
@@ -1189,7 +1013,8 @@ def redownload_with_fallback(
         start_time = time.time()
         dl_ok    = _download_from_source(track, orpheus_dir, module, output_folder)
         attempt  = {"source": module, "label": label, "dl_ok": dl_ok,
-                    "analysis": None, "file": None, "identity_ok": None}
+                    "measurement": None, "file_status": None, "file": None,
+                    "identity_ok": None}
 
         if not dl_ok:
             # Proses orpheus crash / exit non-0 — lewati source ini
@@ -1223,37 +1048,31 @@ def redownload_with_fallback(
             attempts.append(attempt)
             continue
 
-        log.info(f"  [ID-OK]   Identitas cocok — melanjutkan analisis spektral...")
-        analysis       = analyze_flac_quality(new_file)
-        attempt["analysis"] = analysis
+        log.info(f"  [ID-OK]   Identitas cocok — mengukur file...")
+        status, measurement, prov = inspect(new_file)
+        attempt["measurement"] = measurement
+        attempt["file_status"] = status
 
-        verdict  = analysis["verdict"]
-        sr       = analysis["sample_rate"]
-        bw       = analysis["bandwidth_pct"]
-        co       = analysis["cutoff_hz"]
-        slope    = analysis.get("rolloff_slope")
-        conf     = analysis.get("confidence", "?")
-        sr_str   = f"{sr/1000:.1f}kHz" if sr else "?"
-        co_str   = f"{co/1000:.1f}kHz" if isinstance(co, (int, float)) else "?"
-        bw_str   = f"{bw:.1f}%" if bw is not None else "?"
-        sl_str   = f"{slope:.2f}dB/kHz" if slope is not None else "N/A"
+        sr_str  = f"{measurement.sample_rate/1000:.1f}kHz" if measurement.sample_rate else "?"
+        co_str  = (f"tebing {measurement.cutoff_hz/1000:.1f}kHz"
+                   if measurement.cutoff_hz is not None else "tanpa tebing")
+        src_str = f"{prov.source_module}/{prov.codec_served}" if prov else "tanpa provenance"
 
-        if is_truly_lossless(analysis):
-            log.info(f"  {C.GREEN}[SPECTRAL-OK] {label} → lossless terverifikasi: {verdict}{C.RESET}")
-            log.info(f"               {sr_str} | {co_str} | {bw_str} | {sl_str} [{conf}]")
+        if status not in reject_status:
+            log.info(f"  {C.GREEN}[TERIMA] {label} → {status} ({src_str}){C.RESET}")
+            log.info(f"           {sr_str} | {co_str}")
             if preserved_tags:
                 apply_custom_tags(new_file, preserved_tags)
             attempts.append(attempt)
-            return {"status": "verified", "source": module, "label": label,
-                    "file_path": new_file, "analysis": analysis, "attempts": attempts}
-        else:
-            score = quality_score.get(verdict, 10)
-            if bw is not None:
-                score += bw / 5
-            candidates.append({"source": module, "label": label, "file": new_file,
-                                "analysis": analysis, "score": score, "verdict": verdict})
-            log.warning(f"  {C.YELLOW}[SPECTRAL-FAIL] {label} → masih lossy/fake: {verdict} (skor: {score:.1f}){C.RESET}")
-            log.warning(f"                 {sr_str} | {co_str} | {bw_str} | {sl_str} — disimpan sebagai kandidat.")
+            return {"status": "verified" if status == "verified" else "accepted",
+                    "file_status": status, "source": module, "label": label,
+                    "file_path": new_file, "measurement": measurement, "attempts": attempts}
+
+        alasan = "; ".join(measurement.reasons) or measurement.error or status
+        log.warning(f"  {C.YELLOW}[TOLAK] {label} → {status}: {alasan}{C.RESET}")
+        log.warning(f"          {sr_str} | {co_str} — disimpan sebagai kandidat.")
+        candidates.append({"source": module, "label": label, "file": new_file,
+                           "measurement": measurement, "file_status": status})
 
         attempts.append(attempt)
 
@@ -1261,11 +1080,20 @@ def redownload_with_fallback(
         log.error(f"  {C.RED}[ALL-FAIL] Tidak ada source yang menghasilkan file valid.{C.RESET}")
         log.error(f"  [ALL-FAIL] ↳ Penyebab umum: track tidak ada di katalog, metadata tidak cocok, atau semua proses crash.")
         return {"status": "all_failed", "source": None, "label": None,
-                "file_path": None, "analysis": None, "attempts": attempts}
+                "file_path": None, "measurement": None, "attempts": attempts}
 
-    best = max(candidates, key=lambda x: x["score"])
-    log.warning(f"  {C.YELLOW}[BEST] Semua fake. Terbaik: {best['label']} -> "
-                f"{best['verdict']} (score: {best['score']:.1f}){C.RESET}")
+    def _candidate_key(cand):
+        m = cand["measurement"]
+        try:
+            size = os.path.getsize(cand["file"])
+        except OSError:
+            size = 0
+        return (len(m.reasons) == 0, m.effective_bit_depth or 0, m.sample_rate or 0, size)
+
+    best = max(candidates, key=_candidate_key)
+    log.warning(f"  {C.YELLOW}[BEST] Semua ditolak. Terbaik: {best['label']} -> "
+                f"{best['file_status']}: "
+                f"{'; '.join(best['measurement'].reasons) or '?'}{C.RESET}")
 
     if preserved_tags:
         apply_custom_tags(best["file"], preserved_tags)
@@ -1279,7 +1107,8 @@ def redownload_with_fallback(
                 log.debug(f"  [CLEAN] Gagal hapus: {e}")
 
     return {"status": "best_available", "source": best["source"], "label": best["label"],
-            "file_path": best["file"], "analysis": best["analysis"], "attempts": attempts}
+            "file_status": best["file_status"], "file_path": best["file"],
+            "measurement": best["measurement"], "attempts": attempts}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1348,16 +1177,15 @@ def print_summary(bad_tracks: list[dict], results: dict) -> dict:
             fname = track["filename"]
             if results.get(fname) == "best_available":
                 fb      = track.get("fallback_result", {})
-                a       = fb.get("analysis") or {}
-                co      = a.get("cutoff_hz")
-                bw      = a.get("bandwidth_pct")
-                co_str  = f"{co/1000:.1f}kHz" if isinstance(co, (int, float)) else "?"
-                bw_str  = f"{bw:.1f}%" if isinstance(bw, float) else "?"
+                m       = fb.get("measurement")
+                co_str  = (f"tebing {m.cutoff_hz/1000:.1f}kHz"
+                           if m is not None and m.cutoff_hz is not None else "tanpa tebing")
+                alasan  = "; ".join(m.reasons) if m is not None and m.reasons else "?"
                 src_list = ", ".join(att["label"] for att in fb.get("attempts", [])
                                      if att.get("dl_ok"))
                 print(f"  [~] {fname}")
-                print(f"      Dari: {fb.get('label','?')} -> {a.get('verdict','?')} "
-                      f"| {co_str} | BW: {bw_str}")
+                print(f"      Dari: {fb.get('label','?')} -> {fb.get('file_status','?')} "
+                      f"| {co_str} | {alasan}")
                 print(f"      Dicoba: {src_list or '?'}")
 
     if failed_count > 0:
@@ -1421,7 +1249,7 @@ def main():
     parser.add_argument("--auto", action="store_true",
         help="Download semua tanpa konfirmasi")
     parser.add_argument("--include-possibly-upsampled", action="store_true",
-        help="Tambahkan 'Possibly Upsampled' ke bad verdicts")
+        help="Tambahkan 'Possibly Upsampled' ke verdict Soniq yang dipakai")
     parser.add_argument("--report-only", action="store_true",
         help="Simpan laporan JSON saja, tidak download")
     parser.add_argument("--no-checkpoint", action="store_true",
@@ -1430,9 +1258,9 @@ def main():
         help="[NEW-DUP] Skip langkah duplicate detection")
     args = parser.parse_args()
 
-    bad_verdicts = list(CONFIG["settings"]["bad_verdicts"])
+    soniq_flags = list(CONFIG["settings"]["soniq_flags"])
     if args.include_possibly_upsampled:
-        bad_verdicts.append("Possibly Upsampled")
+        soniq_flags.append("Possibly Upsampled")
 
     if args.output is None:
         args.output = args.music_folder
@@ -1455,7 +1283,7 @@ def main():
         log.info("[DUP] Duplicate detection di-skip (--skip-dedup).")
 
     # ── STEP 1: Parse CSV ──────────────────────────────────────────────────
-    bad_tracks = parse_soniq_csv(args.csv, bad_verdicts)
+    bad_tracks = parse_soniq_csv(args.csv, soniq_flags)
     if not bad_tracks:
         log.info(f"{C.GREEN}Tidak ada track bermasalah!{C.RESET}")
         return
@@ -1576,34 +1404,28 @@ def main():
             preserved_tags = preserved_tags,
             output_folder  = args.output,
             valid_sources  = valid_sources,
-            quality_score  = CONFIG["quality_score"],
+            reject_status  = CONFIG["settings"]["redownload_status"],
         )
 
         track["fallback_result"] = fb
         status = fb["status"]
 
-        if status == "verified":
-            a      = fb["analysis"]
-            sr_str = f"{a['sample_rate']/1000:.1f}kHz" if a.get("sample_rate") else "?"
-            bd_str = f"{a['bit_depth']}-bit" if a.get("bit_depth") else "?"
-            co     = a.get("cutoff_hz")
-            bw     = a.get("bandwidth_pct")
-            sl     = a.get("rolloff_slope")
-            co_str = f"{co/1000:.1f}kHz" if isinstance(co, (int, float)) else "?"
-            bw_str = f"{bw:.1f}%" if bw is not None else "?"
-            sl_str = f"{sl:.2f}dB/kHz" if sl is not None else "N/A"
-            log.info(f"  {C.GREEN}[RESULT] ✓ LOSSLESS TERVERIFIKASI dari {fb['label']}{C.RESET}")
-            log.info(f"           {sr_str}/{bd_str} | Cutoff:{co_str} | BW:{bw_str} | Slope:{sl_str}")
+        if status in ("verified", "accepted"):
+            m      = fb["measurement"]
+            sr_str = f"{m.sample_rate/1000:.1f}kHz" if m.sample_rate else "?"
+            bd_str = f"{m.effective_bit_depth}-bit" if m.effective_bit_depth else "?"
+            co_str = (f"tebing {m.cutoff_hz/1000:.1f}kHz"
+                      if m.cutoff_hz is not None else "tanpa tebing")
+            log.info(f"  {C.GREEN}[RESULT] ✓ DITERIMA ({fb['file_status']}) dari {fb['label']}{C.RESET}")
+            log.info(f"           {sr_str}/{bd_str} | {co_str}")
             results[filename] = "success_verified"
         elif status == "best_available":
-            a      = fb.get("analysis") or {}
-            co     = a.get("cutoff_hz")
-            bw     = a.get("bandwidth_pct")
-            verdict_str = a.get('verdict', '?')
-            co_str = f"{co/1000:.1f}kHz" if isinstance(co, (int, float)) else "?"
-            bw_str = f"{bw:.1f}%" if bw is not None else "?"
+            m      = fb.get("measurement")
+            co_str = (f"tebing {m.cutoff_hz/1000:.1f}kHz"
+                      if m is not None and m.cutoff_hz is not None else "tanpa tebing")
+            alasan = "; ".join(m.reasons) if m is not None and m.reasons else "?"
             log.warning(f"  {C.YELLOW}[RESULT] ~ BEST AVAILABLE dari {fb['label']}: "
-                        f"{verdict_str} — Cutoff:{co_str} | BW:{bw_str}{C.RESET}")
+                        f"{fb.get('file_status','?')} — {co_str} | {alasan}{C.RESET}")
             log.warning(f"  [RESULT] ↳ Tidak ada source lossless, file terbaik yang tersedia disimpan.")
             results[filename] = "best_available"
         else:

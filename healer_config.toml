@@ -28,15 +28,21 @@ delay_between_downloads = 3
 # true = hapus file fake, false = backup ke backup_folder
 delete_fake_files = false
 
-# Verdict Soniq yang dianggap bermasalah
-# Hapus/komentari item yang tidak ingin di-redownload
-bad_verdicts = [
+# Verdict Soniq yang dipakai untuk memilih kandidat dari CSV.
+# Ini data Soniq, bukan penilaian kita sendiri.
+soniq_flags = [
     "Upsampled / Transcoded",
     "Lossy Transcode",
     "Low-Bitrate Lossy",
-    "Possibly Upsampled",   # file upscaling/fake lossless → ganti ke AAC asli
+    "Possibly Upsampled",
     "Error",
 ]
+
+# Status hasil pengukuran yang membuat file hasil download ditolak.
+# Pilihan yang sah: "suspect", "corrupt", "unknown".
+# "unknown" tidak disarankan: sebagian besar file akan masuk kategori itu,
+# termasuk semua AAC 256 kbps ke atas yang memang tidak bisa dibuktikan.
+redownload_status = ["suspect", "corrupt"]
 
 # Tag metadata yang di-preserve dari file asli ke file baru
 preserve_tags = [
@@ -83,17 +89,3 @@ enabled = true
 module  = "amazon"
 label   = "Amazon Music HD"
 enabled = false
-
-
-# ── QUALITY SCORE ────────────────────────────────────────────────────────────
-# Skor untuk memilih "yang paling bagus" jika semua source menghasilkan fake.
-# Semakin tinggi = semakin baik.
-[quality_score]
-"True High-Resolution Audio"          = 120
-"Standard Quality (CD / Near-CD)"     = 100
-"Natural Rolloff (Vintage Recording)" = 95
-"Possibly Upsampled"                  = 70
-"Upsampled / Transcoded"              = 40
-"Lossy Transcode"                     = 20
-"Unknown"                             = 10
-"Error"                               = 0
