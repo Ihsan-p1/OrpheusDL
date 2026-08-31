@@ -16,6 +16,7 @@ CLIFF_SPAN_HZ = 1000.0
 CLIFF_RECOVERY_DB = 5.0
 CLIFF_SUSPECT_MAX_HZ = 20500.0
 CLIFF_MIN_HZ = 8000.0
+CLIFF_DEAD_ABOVE_MAX_STD_DB = 2.0
 SMOOTH_HZ = 200.0
 DEAD_BAND_MAX_STD_DB = 2.8
 DEAD_BAND_MIN_GAP_DB = 20.0
@@ -105,6 +106,12 @@ def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
     Tebing di bawah CLIFF_MIN_HZ diabaikan. Tidak ada encoder yang memotong di
     sana, jadi jatuh tajam sebesar itu berasal dari isi rekamannya sendiri,
     biasanya piano atau instrumen tunggal yang spektrumnya memang sepi.
+
+    Syarat ketiga: pita di atas tebing harus mati, bukan cuma sepi. Encoder
+    menulis nol di sana, jadi variasinya di bawah satu dB. Rolloff alami yang
+    menukik ke arah Nyquist juga turun 30 dB dalam satu kHz dan juga tidak
+    pernah kembali, tapi isinya masih bergerak 7 sampai 21 dB. Tanpa syarat ini
+    159 file dengan rolloff biasa di 20,5 kHz terbaca bertebing encoder.
     """
     bin_hz = float(freqs[1] - freqs[0])
     span = max(1, int(span_hz / bin_hz))
@@ -114,8 +121,13 @@ def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
         if freqs[i] < CLIFF_MIN_HZ:
             continue
         tail = smooth[i + span:]
-        if float(np.median(tail)) <= float(smooth[i + span]) + CLIFF_RECOVERY_DB:
-            return float(freqs[i]), float(drops[i])
+        if tail.size < 2:
+            continue
+        if float(np.median(tail)) > float(smooth[i + span]) + CLIFF_RECOVERY_DB:
+            continue
+        if float(tail.std()) > CLIFF_DEAD_ABOVE_MAX_STD_DB:
+            continue
+        return float(freqs[i]), float(drops[i])
     return None, None
 
 
