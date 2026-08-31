@@ -74,6 +74,8 @@ Lowpass keras. Ambil lima jendela FFT yang tersebar merata antara 20% dan 80% du
 
 Upsampling. Kalau file mendeklarasikan 96 kHz tapi tidak ada energi berarti di atas 22,05 kHz, isinya kemungkinan besar berasal dari 44,1 kHz. Laporkan frekuensi energi tertinggi terhadap Nyquist yang dideklarasikan. Ini bukti keras dan bisa diulang.
 
+Pita atas mati. Ditambahkan setelah pengukuran: `fake_2_aac128` lolos dari detektor tebing karena sumbernya memang sudah sangat sepi di frekuensi tinggi (-88 dB pada 16 kHz), jadi pemotongan encoder cuma menghasilkan penurunan 16 dB. Yang membedakannya adalah variasi. Lantai noise rekaman asli bergerak naik turun (standar deviasi 5,0 sampai 7,4 dB di pita 82 sampai 97,5 persen Nyquist), sedangkan pita yang dinolkan encoder rata tanpa gerakan (2,4 sampai 2,6 dB). Pemisahannya bersih tanpa tumpang tindih pada set ground-truth.
+
 Bit depth semu. Kalau file 24-bit tapi delapan bit terbawah selalu nol di seluruh sampel, isinya 16-bit yang dipadding. Cek langsung ke sampel integer, tidak perlu FFT.
 
 Integritas decode. File yang gagal di-decode, terpotong, atau punya frame rusak ditandai corrupt. Ini kategori tersendiri, bukan masalah kualitas.
@@ -121,9 +123,10 @@ Dua file test tanpa framework: `test_quality_probe.py` untuk detektor Lapis 2 da
 
 Set ground-truth ada di `ground_truth/` di root repo, 370 MB, di luar git: 3 file FLAC asli dan 12 hasil transcode (aac128, aac256, aac320 untuk tiga sumber, plus mp3128, mp3320, opus128 untuk sumber pertama). Assertion:
 
-- Kelima transcode 128 kbps (tiga AAC, satu MP3, satu Opus) keluar sebagai `suspect`. Cutoff-nya ada di 16 sampai 17 kHz, jauh di bawah ambang 19 kHz.
+- Kelima transcode 128 kbps (tiga AAC, satu MP3, satu Opus) keluar sebagai `suspect`.
+- MP3 320 kbps juga keluar `suspect`. Ini di luar dugaan awal: tebingnya ada di 19,2 kHz, malah lebih rendah daripada Opus 128 yang memotong di 19,7 kHz.
 - Ketiga file asli keluar bukan `suspect`.
-- Transcode 256 dan 320 kbps keluar `unknown`. Keduanya tidak punya tebing di bawah 19 kHz, jadi detektor memang tidak boleh menuduhnya. Test menuliskan ini sebagai hasil yang diharapkan, bukan sebagai kegagalan.
+- Keenam transcode AAC 256 dan 320 kbps keluar `unknown`. Tidak ada satu pun yang punya tebing, dan variasi pita atasnya (4,6 sampai 7,4 dB) tumpang tindih persis dengan file asli (5,0 sampai 7,4 dB). Test menuliskan ini sebagai hasil yang diharapkan, bukan sebagai kegagalan.
 - Menjalankan detektor dua kali pada file yang sama memberi hasil identik.
 
 Cara membuat ulang set ground-truth kalau hilang. Flag `-vn` wajib karena cover art tertanam adalah stream h264 yang merusak muxing m4a:

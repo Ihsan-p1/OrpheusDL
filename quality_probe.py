@@ -5,17 +5,41 @@ ulang dengan hasil sama, dan diam untuk hal yang tidak bisa dibuktikan.
 """
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass, field
+
 import numpy as np
 import soundfile as sf
 
 CLIFF_MIN_DROP_DB = 30.0
 CLIFF_SPAN_HZ = 1000.0
 CLIFF_RECOVERY_DB = 5.0
-CLIFF_SUSPECT_MAX_HZ = 19000.0
+CLIFF_SUSPECT_MAX_HZ = 20500.0
 SMOOTH_HZ = 200.0
+DEAD_BAND_MAX_STD_DB = 3.5
+DEAD_BAND_MIN_GAP_DB = 20.0
+DEAD_BAND_RANGE = (0.82, 0.975)
+REFERENCE_BAND_RANGE = (0.45, 0.72)
 UPSAMPLE_MIN_HZ = 24000.0
 N_WINDOWS = 5
 N_SAMPLES = 131072
+
+SIGNAL_EXTENSIONS = (".flac", ".wav", ".aiff", ".aif")
+
+
+@dataclass
+class ProbeResult:
+    status: str = "unknown"
+    reasons: list[str] = field(default_factory=list)
+    sample_rate: int | None = None
+    declared_bit_depth: int | None = None
+    effective_bit_depth: int | None = None
+    cutoff_hz: float | None = None
+    cutoff_drop_db: float | None = None
+    highest_energy_hz: float | None = None
+    top_band_std_db: float | None = None
+    top_band_gap_db: float | None = None
+    error: str | None = None
 
 
 def median_spectrum(path: str, n_windows: int = N_WINDOWS,
@@ -86,3 +110,107 @@ def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
         if float(np.median(tail)) <= float(smooth[i + span]) + CLIFF_RECOVERY_DB:
             return float(freqs[i]), float(drops[i])
     return None, None
+
+
+def dead_band(freqs: np.ndarray, db: np.ndarray) -> tuple[float | None, float | None]:
+    """Ukur seberapa hidup pita frekuensi teratas dibanding pita tengah.
+
+    Rekaman asli punya lantai noise yang bergerak naik turun di sana, bahkan
+    ketika isinya sangat sepi. Encoder yang memotong meninggalkan pita yang
+    rata tanpa gerakan sama sekali. Yang membedakan bukan seberapa sepi, tapi
+    ada atau tidaknya variasi.
+
+    Kembalikan (standar deviasi pita atas, jarak ke pita tengah) dalam dB.
+    """
+    nyquist = float(freqs[-1])
+    top = db[(freqs >= DEAD_BAND_RANGE[0] * nyquist) & (freqs <= DEAD_BAND_RANGE[1] * nyquist)]
+    mid = db[(freqs >= REFERENCE_BAND_RANGE[0] * nyquist)
+             & (freqs <= REFERENCE_BAND_RANGE[1] * nyquist)]
+    if top.size < 2 or mid.size < 2:
+        return None, None
+    return float(top.std()), float(np.median(mid) - np.median(top))
+
+
+def bit_depths(path: str, n_frames: int = 500_000) -> tuple[int | None, int | None]:
+    """Bandingkan bit depth yang dideklarasikan dengan yang benar-benar dipakai.
+
+    soundfile menaruh sampel di bit teratas int32, jadi jumlah bit nol di bawah
+    memberitahu berapa bit yang sebenarnya terisi. File 24-bit yang isinya
+    16-bit dipadding punya delapan bit nol lebih banyak dari seharusnya.
+    """
+    with sf.SoundFile(path) as af:
+        subtype = af.subtype or ""
+        declared = None
+        for bits in (32, 24, 16, 8):
+            if str(bits) in subtype:
+                declared = bits
+                break
+        data = af.read(n_frames, dtype="int32")
+    if declared is None:
+        return None, None
+    values = np.asarray(data).astype(np.int64).ravel()
+    nonzero = values[values != 0]
+    if nonzero.size == 0:
+        return declared, 0
+    lowest_set_bit = int(np.min(nonzero & -nonzero))
+    trailing_zeros = lowest_set_bit.bit_length() - 1
+    return declared, min(declared, 32 - trailing_zeros)
+
+
+def probe(path: str) -> ProbeResult:
+    """Ukur satu file dan laporkan bukti keras yang ditemukan."""
+    if not os.path.exists(path):
+        return ProbeResult(status="corrupt", error="file tidak ditemukan")
+
+    extension = os.path.splitext(path)[1].lower()
+    if extension not in SIGNAL_EXTENSIONS:
+        return ProbeResult(status="unknown",
+                           error=f"probe sinyal tidak berlaku untuk {extension}")
+
+    result = ProbeResult()
+    try:
+        freqs, db, sr = median_spectrum(path)
+    except ValueError as e:
+        result.status = "unknown"
+        result.error = str(e)
+        return result
+    except Exception as e:
+        return ProbeResult(status="corrupt", error=str(e))
+
+    result.sample_rate = sr
+    result.cutoff_hz, result.cutoff_drop_db = find_lowpass_cliff(freqs, db)
+
+    audible = np.where(db >= -80.0)[0]
+    result.highest_energy_hz = float(freqs[audible[-1]]) if len(audible) else 0.0
+    result.top_band_std_db, result.top_band_gap_db = dead_band(freqs, db)
+
+    try:
+        result.declared_bit_depth, result.effective_bit_depth = bit_depths(path)
+    except Exception as e:
+        result.error = f"bit depth tak terbaca: {e}"
+
+    if result.cutoff_hz is not None and result.cutoff_hz < CLIFF_SUSPECT_MAX_HZ:
+        result.reasons.append(
+            f"tebing lowpass {result.cutoff_hz / 1000:.1f} kHz "
+            f"turun {result.cutoff_drop_db:.0f} dB")
+
+    if (result.top_band_std_db is not None
+            and result.top_band_std_db < DEAD_BAND_MAX_STD_DB
+            and result.top_band_gap_db >= DEAD_BAND_MIN_GAP_DB):
+        result.reasons.append(
+            f"pita atas mati: variasi cuma {result.top_band_std_db:.1f} dB, "
+            f"{result.top_band_gap_db:.0f} dB di bawah pita tengah")
+
+    if sr >= 88200 and result.highest_energy_hz < UPSAMPLE_MIN_HZ:
+        result.reasons.append(
+            f"dideklarasikan {sr / 1000:.1f} kHz tapi energi berhenti di "
+            f"{result.highest_energy_hz / 1000:.1f} kHz")
+
+    if (result.declared_bit_depth and result.effective_bit_depth
+            and result.effective_bit_depth <= result.declared_bit_depth - 8):
+        result.reasons.append(
+            f"{result.declared_bit_depth}-bit tapi cuma "
+            f"{result.effective_bit_depth} bit yang terisi")
+
+    result.status = "suspect" if result.reasons else "unknown"
+    return result
