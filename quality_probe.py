@@ -15,8 +15,9 @@ CLIFF_MIN_DROP_DB = 30.0
 CLIFF_SPAN_HZ = 1000.0
 CLIFF_RECOVERY_DB = 5.0
 CLIFF_SUSPECT_MAX_HZ = 20500.0
+CLIFF_MIN_HZ = 8000.0
 SMOOTH_HZ = 200.0
-DEAD_BAND_MAX_STD_DB = 3.5
+DEAD_BAND_MAX_STD_DB = 2.8
 DEAD_BAND_MIN_GAP_DB = 20.0
 DEAD_BAND_RANGE = (0.82, 0.975)
 REFERENCE_BAND_RANGE = (0.45, 0.72)
@@ -100,12 +101,18 @@ def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
     Syarat kedua yang membedakan tebing dari rolloff biasa. Rekaman asli boleh
     saja sepi di frekuensi tinggi, tapi turunnya landai dan energinya masih
     naik turun di atas sana. Encoder memotong, lalu tidak ada apa-apa lagi.
+
+    Tebing di bawah CLIFF_MIN_HZ diabaikan. Tidak ada encoder yang memotong di
+    sana, jadi jatuh tajam sebesar itu berasal dari isi rekamannya sendiri,
+    biasanya piano atau instrumen tunggal yang spektrumnya memang sepi.
     """
     bin_hz = float(freqs[1] - freqs[0])
     span = max(1, int(span_hz / bin_hz))
     smooth = smooth_spectrum(freqs, db)
     drops = smooth[:-span] - smooth[span:]
     for i in np.flatnonzero(drops >= min_drop_db):
+        if freqs[i] < CLIFF_MIN_HZ:
+            continue
         tail = smooth[i + span:]
         if float(np.median(tail)) <= float(smooth[i + span]) + CLIFF_RECOVERY_DB:
             return float(freqs[i]), float(drops[i])
