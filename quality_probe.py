@@ -214,3 +214,35 @@ def probe(path: str) -> ProbeResult:
 
     result.status = "suspect" if result.reasons else "unknown"
     return result
+
+
+from orpheus.provenance import LOSSLESS_CODECS, Provenance, read_provenance
+
+LOSSLESS_EXTENSIONS = (".flac", ".wav", ".aiff", ".aif", ".alac")
+
+
+def classify(result: ProbeResult, prov: Provenance | None, file_path: str) -> str:
+    """Gabungkan bukti provenance dan bukti sinyal jadi satu status.
+
+    Provenance menang atas analisis sinyal. Kalau kita tahu file datang dari
+    modul apa dengan codec apa, tidak ada gunanya menebak lewat FFT.
+    """
+    if result.status == "corrupt":
+        return "corrupt"
+
+    if prov is not None and prov.codec_served:
+        served = prov.codec_served.lower()
+        if served in LOSSLESS_CODECS:
+            return "verified"
+        if os.path.splitext(file_path)[1].lower() in LOSSLESS_EXTENSIONS:
+            return "suspect"
+        return "unknown"
+
+    return result.status
+
+
+def inspect(file_path: str) -> tuple[str, ProbeResult, Provenance | None]:
+    """Baca provenance, ukur sinyal, kembalikan status akhir."""
+    prov = read_provenance(file_path)
+    result = probe(file_path)
+    return classify(result, prov, file_path), result, prov

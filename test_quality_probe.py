@@ -70,6 +70,48 @@ def test_probe_is_repeatable():
     assert probe(path).cutoff_hz == probe(path).cutoff_hz
 
 
+def test_lossless_provenance_wins_without_signal_analysis():
+    from orpheus.provenance import Provenance
+    from quality_probe import ProbeResult, classify
+    prov = Provenance("tidal", "HIFI", "flac", "flac", "2026-08-31T04:00:00+00:00", "db681fb")
+    assert classify(ProbeResult(status="unknown"), prov, "x.flac") == "verified"
+
+
+def test_lossy_provenance_in_lossless_container_is_suspect():
+    from orpheus.provenance import Provenance
+    from quality_probe import ProbeResult, classify
+    prov = Provenance("applemusic", "HIFI", "aac", "flac", "2026-08-31T04:00:00+00:00", "db681fb")
+    assert classify(ProbeResult(status="unknown"), prov, "x.flac") == "suspect"
+
+
+def test_lossy_provenance_in_lossy_container_is_not_accused():
+    from orpheus.provenance import Provenance
+    from quality_probe import ProbeResult, classify
+    prov = Provenance("applemusic", "HIGH", "aac", "aac", "2026-08-31T04:00:00+00:00", "db681fb")
+    assert classify(ProbeResult(status="unknown"), prov, "x.m4a") == "unknown"
+
+
+def test_corrupt_beats_everything():
+    from orpheus.provenance import Provenance
+    from quality_probe import ProbeResult, classify
+    prov = Provenance("tidal", "HIFI", "flac", "flac", "2026-08-31T04:00:00+00:00", "db681fb")
+    assert classify(ProbeResult(status="corrupt"), prov, "x.flac") == "corrupt"
+
+
+def test_no_provenance_falls_back_to_probe():
+    from quality_probe import ProbeResult, classify
+    assert classify(ProbeResult(status="suspect", reasons=["tebing"]), None, "x.flac") == "suspect"
+    assert classify(ProbeResult(status="unknown"), None, "x.flac") == "unknown"
+
+
+def test_inspect_on_ground_truth():
+    from quality_probe import inspect
+    status, result, prov = inspect(os.path.join(GT, "fake_1_aac128.flac"))
+    assert status == "suspect"
+    assert prov is None
+    assert result.cutoff_hz is not None
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
