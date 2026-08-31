@@ -184,7 +184,7 @@ def main():
     all_files = []
     # Scan .flac dan .m4a
     for ext in ("*.flac", "*.m4a"):
-        all_files.extend(list(target_path.glob(ext)))
+        all_files.extend(list(target_path.rglob(ext)))
         
     print(f"Ditemukan {len(all_files)} file audio di disk.")
     
