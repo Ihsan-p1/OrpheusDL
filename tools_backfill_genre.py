@@ -10,8 +10,9 @@ sama utuh — bukan sekadar termuat, karena "Artis" termuat di "Artis Lain".
 Yang tidak cocok dicatat, tagnya tidak disentuh: genre yang salah lebih
 merepotkan daripada genre yang kosong.
 
-    python tools_backfill_genre.py            # laporan saja
-    python tools_backfill_genre.py --apply    # tulis tag genre
+    python tools_backfill_genre.py                 # laporan saja
+    python tools_backfill_genre.py --apply         # tulis tag genre
+    python tools_backfill_genre.py --apply --ulang-gagal   # tanya ulang yang gagal
 """
 import json
 import os
@@ -32,6 +33,8 @@ TAK_KETEMU = "genre_tak_ketemu.txt"
 # iTunes Search API tanpa kunci dibatasi sekitar 20 permintaan per menit.
 JEDA = 3.0
 API = "https://itunes.apple.com/search"
+# Katalog US tidak memuat sebagian rilis Indonesia, Jepang, dan Mandarin.
+NEGARA = ("US", "ID", "JP")
 
 
 # Kata sambung antar nama artis. Dibuang dari kedua sisi supaya "Yovie & Nuno"
@@ -39,23 +42,42 @@ API = "https://itunes.apple.com/search"
 SAMBUNG = {"and", "dan", "with", "feat", "featuring", "ft", "x", "vs"}
 
 
+def bagian_artis(s):
+    """Nama-nama artis dalam satu string, masing-masing sebagai tuple kata."""
+    keluar = set()
+    for bagian in re.split(r"[;,&/]|\bfeat\b|\bwith\b", s, flags=re.IGNORECASE):
+        token = tuple(w for w in normal(bagian).split() if w not in SAMBUNG)
+        if token:
+            keluar.add(token)
+    token = tuple(w for w in normal(s).split() if w not in SAMBUNG)
+    if token:
+        keluar.add(token)
+    return keluar
+
+
 def cocok_artis(tag, katalog):
     """Nama artis di tag dan di katalog menunjuk orang yang sama.
 
-    Substring terlalu longgar: "Artis" termuat di "Artis Lain", padahal itu dua
-    orang. Yang diterima hanya dua hal — nama lengkapnya sama, atau nama di
-    katalog sama dengan salah satu artis yang didaftar tag (tag sering menulis
-    artis tamu, katalog Apple hanya yang utama).
-    """
-    def token(s):
-        return tuple(w for w in normal(s).split() if w not in SAMBUNG)
+    Kedua sisi dipecah, lalu dicari satu nama yang sama utuh. Keduanya perlu
+    dipecah karena tag dan katalog tidak sepakat siapa yang didaftar: tag
+    menulis "Zhou Shen; HOYO-MiX" untuk yang katalognya "Zhou Shen", tapi
+    katalog menulis "CHiCO with HoneyWorks" untuk yang tagnya "CHiCO".
 
-    k = token(katalog)
-    if not k:
-        return False
-    if k == token(tag):
-        return True
-    return any(k == token(bagian) for bagian in re.split(r"[;,&/]|feat", tag))
+    Pencocokan menuntut nama yang utuh sama, bukan termuat. "Artis" termuat di
+    "Artis Lain", padahal itu dua orang.
+    """
+    return bool(bagian_artis(tag) & bagian_artis(katalog))
+
+
+def bagian_judul(s):
+    """Judul apa adanya, dan judul tanpa ekor dalam kurung.
+
+    Tag dan katalog tidak sepakat menaruh keterangan versi: satu menulis
+    "Dia Milikku (Album Version)" untuk yang lain menulis "Dia Milikku".
+    """
+    penuh = normal(s)
+    pendek = normal(re.sub(r"[\(\[].*", " ", s))
+    return {x for x in (penuh, pendek) if x}
 
 
 def pilih(hasil, artist, title):
@@ -63,37 +85,51 @@ def pilih(hasil, artist, title):
 
     `hasil` adalah daftar entri mentah dari API.
     """
-    t = normal(title)
-    a = normal(artist)
+    t = bagian_judul(title)
     for r in hasil:
-        if normal(r.get("trackName", "")) != t:
+        if not (t & bagian_judul(r.get("trackName", ""))):
             continue
-        if a and cocok_artis(artist, r.get("artistName", "")):
+        if normal(artist) and cocok_artis(artist, r.get("artistName", "")):
             return r.get("primaryGenreName") or None
     return None
 
 
-def cari(artist, title, cache):
-    """Genre untuk satu lagu. Jawaban API disimpan supaya tidak ditembak dua kali."""
-    kunci_cache = f"{artist}|{title}"
-    if kunci_cache in cache:
-        return cache[kunci_cache]
+def tanya(artist, title, negara):
+    """Hasil mentah API untuk satu wilayah katalog."""
     query = urllib.parse.urlencode({
-        "term": f"{artist} {title}", "entity": "song", "limit": 5, "country": "US"})
+        "term": f"{artist} {title}", "entity": "song", "limit": 5, "country": negara})
     try:
         with urllib.request.urlopen(f"{API}?{query}", timeout=20) as resp:
             hasil = json.load(resp).get("results", [])
     except Exception as e:
         print(f"  [API-ERR] {artist} - {title}: {e}")
-        return None
-    genre = pilih(hasil, artist, title)
-    cache[kunci_cache] = genre
+        hasil = []
     time.sleep(JEDA)
+    return hasil
+
+
+def cari(artist, title, cache, ulang_gagal=False):
+    """Genre untuk satu lagu. Jawaban API disimpan supaya tidak ditembak dua kali."""
+    kunci_cache = f"{artist}|{title}"
+    if kunci_cache in cache and not (ulang_gagal and cache[kunci_cache] is None):
+        return cache[kunci_cache]
+    genre = None
+    for negara in NEGARA:
+        hasil = tanya(artist, title, negara)
+        genre = pilih(hasil, artist, title)
+        if genre:
+            break
+        # Wilayah lain hanya dicoba kalau katalog US memang tidak punya lagunya.
+        # Kalau lagunya ada tapi ditolak, mengulang di wilayah lain sia-sia.
+        if hasil:
+            break
+    cache[kunci_cache] = genre
     return genre
 
 
 def main():
     apply = "--apply" in sys.argv
+    ulang_gagal = "--ulang-gagal" in sys.argv
     cache = json.load(open(CACHE, encoding="utf-8")) if os.path.exists(CACHE) else {}
 
     kosong = []
@@ -117,7 +153,7 @@ def main():
     ketemu, gagal = 0, []
     try:
         for i, (path, artist, title) in enumerate(kosong, 1):
-            genre = cari(artist, title, cache)
+            genre = cari(artist, title, cache, ulang_gagal)
             if genre:
                 ketemu += 1
                 print(f"[{i}/{len(kosong)}] {artist} - {title} -> {genre}")

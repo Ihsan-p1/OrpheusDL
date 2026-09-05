@@ -22,6 +22,22 @@ def test_artis_tamu_di_tag():
                  "Zhou Shen; HOYO-MiX", "Rubia") == "Soundtrack"
 
 
+def test_artis_tamu_di_katalog():
+    # Arah sebaliknya: katalog yang mendaftar lebih banyak.
+    assert pilih([r("CHiCO with HoneyWorks", "Sekaiwa Koi Ni Ochiteiru", "Anime")],
+                 "CHiCO", "Sekaiwa Koi Ni Ochiteiru") == "Anime"
+    assert pilih([r("Lil Baby & Lil Durk", "2040", "Hip-Hop/Rap")],
+                 "Lil Baby", "2040") == "Hip-Hop/Rap"
+
+
+def test_ekor_kurung_diabaikan():
+    # Keterangan versi ada di satu sisi saja.
+    assert pilih([r("HOYO-MiX", "TruE (Instrumental)", "Soundtrack")],
+                 "HOYO-MiX", "TruE") == "Soundtrack"
+    assert pilih([r("Yovie & Nuno", "Dia Milikku", "Pop")],
+                 "Yovie & Nuno", "Dia Milikku (Album Version)") == "Pop"
+
+
 def test_judul_beda_ditolak():
     assert pilih([r("Hivi!", "Pelangi Lain")], "Hivi!", "Pelangi") is None
 
@@ -30,6 +46,10 @@ def test_artis_beda_ditolak():
     # Judul sama, artis lain: justru kasus yang bikin lagu ketukar.
     assert pilih([r("The Walters", "Make You Mine")],
                  "GIVEON", "Make You Mine") is None
+    # Nama artis yang satu termuat di yang lain tetap ditolak.
+    assert pilih([r("Artis Lain", "Lagu")], "Artis", "Lagu") is None
+    assert pilih([r("Lynyrd Skynyrd", "Double Trouble")],
+                 "Quality Control", "Double Trouble") is None
 
 
 def test_kandidat_pertama_yang_cocok_dipakai():
