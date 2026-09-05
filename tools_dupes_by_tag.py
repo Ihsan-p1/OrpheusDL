@@ -9,8 +9,11 @@ Yang disimpan: berprovenance dulu, lalu bit depth, sample rate, ukuran. Yang
 kalah dipindah ke _FAKE_BACKUP, tidak dihapus. Playlist ditulis ulang supaya
 entrinya menunjuk file yang disimpan.
 
-Grup yang durasi anggotanya berbeda lebih dari dua detik dilewati: itu versi
-yang berbeda, bukan salinan.
+File hanya dilepas kalau MD5 audio mentahnya sama dengan yang disimpan. FLAC
+menyimpan MD5 itu sendiri di blok STREAMINFO, jadi kesamaan isi bisa dibuktikan
+sampel per sampel, bukan disimpulkan dari nama, durasi, atau ukuran. Grup yang
+MD5 anggotanya berbeda dilaporkan dan dibiarkan utuh: durasi boleh sama persis
+sementara isinya master yang berbeda.
 
     python tools_dupes_by_tag.py            # laporan saja
     python tools_dupes_by_tag.py --apply    # pindahkan dan tulis ulang playlist
@@ -24,6 +27,7 @@ import unicodedata
 from datetime import datetime
 
 import mutagen
+from mutagen.flac import FLAC
 
 from orpheus.provenance import read_provenance
 
@@ -31,7 +35,6 @@ LIBRARY = r"G:\Music\Library"
 PLAYLISTS = r"G:\Music\Playlists"
 BACKUP = r"G:\Music\_FAKE_BACKUP"
 AUDIO = (".flac", ".m4a", ".mp3")
-BEDA_DURASI_MAKS = 2.0
 
 
 # Tanda baca kana. Ikut dibuang bersama aksen lain, "が" jadi "か" dan itu kata
@@ -65,10 +68,33 @@ def kunci(tags):
     return bersih if bersih[1] else None
 
 
+def md5_audio(path):
+    """MD5 audio mentah dari STREAMINFO, atau None kalau bukan FLAC."""
+    try:
+        return FLAC(path).info.md5_signature or None
+    except Exception:
+        return None
+
+
 def peringkat(berkas):
     """Kunci urut: makin besar makin layak disimpan."""
     return (berkas["provenance"] is not None, berkas["bits"],
             berkas["rate"], berkas["size"])
+
+
+def pilah(files):
+    """Bagi satu grup jadi (yang disimpan, yang dilepas, yang dibiarkan).
+
+    Yang dilepas hanya file yang MD5 audionya sama persis dengan yang disimpan.
+    Tanpa MD5, misalnya pada m4a dan mp3, tidak ada bukti isinya sama, jadi
+    tidak ada yang dilepas.
+    """
+    files = sorted(files, key=peringkat, reverse=True)
+    simpan = files[0]
+    kembaran = [f for f in files[1:]
+                if simpan["md5"] is not None and f["md5"] == simpan["md5"]]
+    lain = [f for f in files[1:] if f not in kembaran]
+    return simpan, kembaran, lain
 
 
 def kumpulkan(library):
@@ -94,6 +120,7 @@ def kumpulkan(library):
             "rate": getattr(tags.info, "sample_rate", 0),
             "size": os.path.getsize(path),
             "durasi": tags.info.length,
+            "md5": md5_audio(path),
         })
     return grup
 
@@ -127,27 +154,25 @@ def main():
 
     ganti, lepas, bytes_lepas, dilewati = {}, [], 0, []
     for (artist, title), files in sorted(kembar.items()):
-        durasi = [f["durasi"] for f in files]
-        if max(durasi) - min(durasi) > BEDA_DURASI_MAKS:
-            dilewati.append((artist, title, files))
-            continue
-        files.sort(key=peringkat, reverse=True)
-        simpan, sisa = files[0], files[1:]
-        print(f"\n[{artist} - {title}]")
-        print(f"  SIMPAN {simpan['nama']}")
-        for f in sisa:
-            print(f"  LEPAS  {f['nama']}  ({f['size'] / 1048576:.1f} MB)")
-            ganti[f["nama"]] = simpan["nama"]
-            lepas.append(f)
-            bytes_lepas += f["size"]
+        simpan, kembaran, lain = pilah(files)
+        if kembaran:
+            print(f"\n[{artist} - {title}]")
+            print(f"  SIMPAN {simpan['nama']}")
+            for f in kembaran:
+                print(f"  LEPAS  {f['nama']}  ({f['size'] / 1048576:.1f} MB)")
+                ganti[f["nama"]] = simpan["nama"]
+                lepas.append(f)
+                bytes_lepas += f["size"]
+        if lain:
+            dilewati.append((artist, title, [simpan] + lain if not kembaran else lain))
 
     for artist, title, files in dilewati:
-        print(f"\n[DILEWATI durasi beda] {artist} - {title}")
+        print(f"\n[DIBIARKAN audio berbeda] {artist} - {title}")
         for f in files:
-            print(f"  {f['nama']}  ({f['durasi']:.0f} detik)")
+            print(f"  {f['nama']}  ({f['durasi']:.1f} detik, {f['bits']}bit/{f['rate']}Hz)")
 
-    print(f"\n{len(kembar)} grup kembar, {len(dilewati)} dilewati, "
-          f"{len(lepas)} file dilepas, {bytes_lepas / 1048576:.0f} MB.")
+    print(f"\n{len(kembar)} grup kembar, {len(dilewati)} dibiarkan karena audionya "
+          f"berbeda, {len(lepas)} file dilepas, {bytes_lepas / 1048576:.0f} MB.")
 
     if not apply:
         print("\nLaporan saja. Jalankan dengan --apply untuk memindahkan.")

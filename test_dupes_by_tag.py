@@ -1,5 +1,5 @@
 """Cek aturan penyimpan dan penulisan ulang playlist."""
-from tools_dupes_by_tag import kunci, normal, peringkat, tulis_ulang
+from tools_dupes_by_tag import kunci, normal, peringkat, pilah, tulis_ulang
 
 
 def test_kunci():
@@ -25,8 +25,26 @@ def test_normal_jaga_tanda_suara_kana():
     assert normal("がっこう") == "がっこう"
 
 
-def berkas(prov=None, bits=16, rate=44100, size=1):
-    return {"provenance": prov, "bits": bits, "rate": rate, "size": size}
+def berkas(prov=None, bits=16, rate=44100, size=1, md5=1):
+    return {"provenance": prov, "bits": bits, "rate": rate, "size": size, "md5": md5}
+
+
+def test_pilah_hanya_lepas_yang_md5_sama():
+    kembar = berkas(size=1, md5=7)
+    beda = berkas(size=2, md5=8)
+    simpan, dilepas, dibiarkan = pilah([berkas(size=9, md5=7), kembar, beda])
+    assert simpan["size"] == 9
+    assert dilepas == [kembar]
+    assert dibiarkan == [beda]
+
+
+def test_pilah_tanpa_md5_tidak_melepas_apa_pun():
+    # m4a dan mp3 tidak menyimpan MD5 audio, jadi tidak ada bukti isinya sama.
+    a, b = berkas(size=9, md5=None), berkas(size=1, md5=None)
+    simpan, dilepas, dibiarkan = pilah([a, b])
+    assert simpan is a
+    assert dilepas == []
+    assert dibiarkan == [b]
 
 
 def test_peringkat():
@@ -56,5 +74,7 @@ if __name__ == "__main__":
     test_normal_lipat_aksen()
     test_normal_jaga_tanda_suara_kana()
     test_peringkat()
+    test_pilah_hanya_lepas_yang_md5_sama()
+    test_pilah_tanpa_md5_tidak_melepas_apa_pun()
     test_tulis_ulang()
     print("test_dupes_by_tag OK")
