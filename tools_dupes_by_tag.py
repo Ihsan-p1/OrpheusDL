@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 from datetime import datetime
 
 import mutagen
@@ -33,13 +34,27 @@ AUDIO = (".flac", ".m4a", ".mp3")
 BEDA_DURASI_MAKS = 2.0
 
 
+# Tanda baca kana. Ikut dibuang bersama aksen lain, "が" jadi "か" dan itu kata
+# yang berbeda, jadi keduanya dikecualikan dari pelipatan.
+KANA_SUARA = {"\u3099", "\u309a"}
+
+
 def normal(s):
-    """Kecilkan huruf, satukan pemisah jadi spasi.
+    """Kecilkan huruf, lipat aksen, satukan pemisah jadi spasi.
 
     \W dengan flag unicode, bukan [^a-z0-9]: judul Jepang habis kalau non-ASCII
     ikut dibuang, dan semua judul CJK menyatu jadi satu grup palsu.
+
+    Aksen dilipat karena tag dan katalog sering menulis nama yang sama dengan
+    huruf berbeda: "JAŸ-Z" untuk "JAY-Z", "Bouwéy" untuk "Bouwey".
     """
-    return re.sub(r"\W+", " ", s.lower(), flags=re.UNICODE).strip()
+    urai = unicodedata.normalize("NFKD", s.lower())
+    tanpa_aksen = "".join(c for c in urai
+                          if unicodedata.category(c) != "Mn" or c in KANA_SUARA)
+    # Disusun ulang supaya tanda suara menempel lagi ke kananya; kalau dibiarkan
+    # terpisah, \W+ mengubahnya jadi spasi dan memotong satu huruf jadi dua.
+    rapat = unicodedata.normalize("NFC", tanpa_aksen)
+    return re.sub(r"\W+", " ", rapat, flags=re.UNICODE).strip()
 
 
 def kunci(tags):

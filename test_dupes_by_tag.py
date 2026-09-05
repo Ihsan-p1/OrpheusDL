@@ -1,5 +1,5 @@
 """Cek aturan penyimpan dan penulisan ulang playlist."""
-from tools_dupes_by_tag import kunci, peringkat, tulis_ulang
+from tools_dupes_by_tag import kunci, normal, peringkat, tulis_ulang
 
 
 def test_kunci():
@@ -10,6 +10,19 @@ def test_kunci():
     assert kunci({"artist": ["X"], "title": [""]}) is None
     # albumartist dipakai kalau artist kosong.
     assert kunci({"albumartist": ["Yura"], "title": ["Jalan Pulang"]})[0] == "yura"
+
+
+def test_normal_lipat_aksen():
+    # Tag dan katalog menulis nama yang sama dengan huruf berbeda.
+    assert normal("JAŸ-Z") == normal("JAY-Z")
+    assert normal("Bouwéy") == normal("Bouwey")
+    assert normal("Devil\u2019s Dance") == normal("Devil's Dance")
+
+
+def test_normal_jaga_tanda_suara_kana():
+    # "が" tidak boleh runtuh jadi "か": itu kata yang berbeda.
+    assert normal("がっこう") != normal("かっこう")
+    assert normal("がっこう") == "がっこう"
 
 
 def berkas(prov=None, bits=16, rate=44100, size=1):
@@ -40,6 +53,8 @@ def test_tulis_ulang():
 
 if __name__ == "__main__":
     test_kunci()
+    test_normal_lipat_aksen()
+    test_normal_jaga_tanda_suara_kana()
     test_peringkat()
     test_tulis_ulang()
     print("test_dupes_by_tag OK")
