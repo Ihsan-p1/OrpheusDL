@@ -33,14 +33,20 @@ AUDIO = (".flac", ".m4a", ".mp3")
 BEDA_DURASI_MAKS = 2.0
 
 
+def normal(s):
+    """Kecilkan huruf, satukan pemisah jadi spasi.
+
+    \W dengan flag unicode, bukan [^a-z0-9]: judul Jepang habis kalau non-ASCII
+    ikut dibuang, dan semua judul CJK menyatu jadi satu grup palsu.
+    """
+    return re.sub(r"\W+", " ", s.lower(), flags=re.UNICODE).strip()
+
+
 def kunci(tags):
     """(artist, title) yang sudah dinormalisasi, atau None kalau judulnya kosong."""
     artist = (tags.get("artist") or tags.get("albumartist") or [""])[0]
     title = (tags.get("title") or [""])[0]
-    # \W dengan flag unicode, bukan [^a-z0-9]: judul Jepang habis kalau non-ASCII
-    # ikut dibuang, dan semua judul CJK menyatu jadi satu grup palsu.
-    bersih = tuple(re.sub(r"\W+", " ", s.lower(), flags=re.UNICODE).strip()
-                   for s in (artist, title))
+    bersih = (normal(artist), normal(title))
     return bersih if bersih[1] else None
 
 
