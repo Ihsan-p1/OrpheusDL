@@ -812,15 +812,17 @@ def handle_fake_file(track: dict, delete: bool, backup_folder: str) -> bool:
 
 
 def rename_to_original(new_file: str, old_path: str) -> str:
-    """Pakai lagi nama file lama untuk file pengganti.
+    """Pindahkan file pengganti ke tempat dan nama file lama.
 
     Source memberi nama sendiri pada hasil unduhan, jadi tanpa ini setiap
     gelombang healer memutus entri playlist yang menunjuk nama lama. Ekstensi
     ikut file baru, karena codec-nya bisa berbeda. Sidecar .lrc ikut pindah.
+
+    Dipanggil setelah file lama diamankan, jadi namanya sudah kosong.
     """
     if not new_file or not old_path or not os.path.exists(new_file):
         return new_file
-    target = os.path.join(os.path.dirname(new_file),
+    target = os.path.join(os.path.dirname(old_path),
                           Path(old_path).stem + Path(new_file).suffix)
     if os.path.normcase(target) == os.path.normcase(new_file):
         return new_file
@@ -1344,7 +1346,13 @@ def main():
         soniq_flags.append("Possibly Upsampled")
 
     if args.output is None:
-        args.output = args.music_folder
+        # Bukan music_folder: kalau source menamai unduhan sama dengan file yang
+        # sudah ada di sana, orpheus menimpanya dan lagu itu hilang. Folder
+        # singgah diletakkan di sebelah, bukan di dalam, supaya tidak ikut
+        # ter-index locate_files dan run_duplicate_check.
+        args.output = os.path.join(os.path.dirname(os.path.normpath(args.music_folder)),
+                                   "_HEAL_STAGING")
+        os.makedirs(args.output, exist_ok=True)
 
     # ── [NEW-DUP] STEP 0: Duplicate Detection ─────────────────────────────
     if not args.skip_dedup and not args.report_only and not args.dry_run:
