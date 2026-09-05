@@ -811,6 +811,37 @@ def handle_fake_file(track: dict, delete: bool, backup_folder: str) -> bool:
     return _move_or_delete_file(file_path or "", delete, backup_folder)
 
 
+def rename_to_original(new_file: str, old_path: str) -> str:
+    """Pakai lagi nama file lama untuk file pengganti.
+
+    Source memberi nama sendiri pada hasil unduhan, jadi tanpa ini setiap
+    gelombang healer memutus entri playlist yang menunjuk nama lama. Ekstensi
+    ikut file baru, karena codec-nya bisa berbeda. Sidecar .lrc ikut pindah.
+    """
+    if not new_file or not old_path or not os.path.exists(new_file):
+        return new_file
+    target = os.path.join(os.path.dirname(new_file),
+                          Path(old_path).stem + Path(new_file).suffix)
+    if os.path.normcase(target) == os.path.normcase(new_file):
+        return new_file
+    if os.path.exists(target):
+        log.warning(f"  [NAMA] {Path(target).name} sudah ada, nama unduhan dipakai apa adanya.")
+        return new_file
+    try:
+        os.replace(new_file, target)
+    except OSError as e:
+        log.warning(f"  [NAMA] Gagal pakai nama lama: {e}")
+        return new_file
+    lirik_lama = os.path.splitext(new_file)[0] + ".lrc"
+    if os.path.exists(lirik_lama):
+        try:
+            os.replace(lirik_lama, os.path.splitext(target)[0] + ".lrc")
+        except OSError as e:
+            log.debug(f"  [NAMA] Lirik tidak ikut: {e}")
+    log.info(f"  [NAMA] Dipakai nama lama: {Path(target).name}")
+    return target
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  [C2] STEP 3b: BUILT-IN FLAC SPECTRAL ANALYZER
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1462,6 +1493,9 @@ def main():
             handle_fake_file(track,
                              delete=CONFIG["settings"]["delete_fake_files"],
                              backup_folder=CONFIG["paths"]["backup_folder"])
+            # Nama lama baru bisa dipakai setelah file lama minggir.
+            if fb.get("file_path"):
+                fb["file_path"] = rename_to_original(fb["file_path"], track["file_path"])
 
         if status in ("verified", "accepted"):
             m      = fb["measurement"]
