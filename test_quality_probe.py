@@ -104,6 +104,33 @@ def test_no_provenance_falls_back_to_probe():
     assert classify(ProbeResult(status="unknown"), None, "x.flac") == "unknown"
 
 
+def _probe_with_read_error(message):
+    import quality_probe
+    original = quality_probe.median_spectrum
+
+    def raise_error(path):
+        raise RuntimeError(message)
+
+    quality_probe.median_spectrum = raise_error
+    try:
+        return quality_probe.probe(os.path.join(GT, "orig_1.flac"))
+    finally:
+        quality_probe.median_spectrum = original
+
+
+def test_unsupported_format_is_unknown_not_corrupt():
+    # FLAC 32-bit: libsndfile tak mendukungnya, tapi filenya utuh. Status harus
+    # unknown supaya provenance yang memutuskan, bukan corrupt.
+    result = _probe_with_read_error(
+        "Error opening 'Slow.flac': File contains data in an unimplemented format.")
+    assert result.status == "unknown", result.status
+
+
+def test_truncated_file_is_still_corrupt():
+    result = _probe_with_read_error("Internal psf_fseek() failed.")
+    assert result.status == "corrupt", result.status
+
+
 def test_inspect_on_ground_truth():
     from quality_probe import inspect
     status, result, prov = inspect(os.path.join(GT, "fake_1_aac128.flac"))

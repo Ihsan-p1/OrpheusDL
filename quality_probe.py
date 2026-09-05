@@ -194,6 +194,11 @@ def probe(path: str) -> ProbeResult:
         result.error = str(e)
         return result
     except Exception as e:
+        # libsndfile menolak format yang tidak diimplementasikannya (FLAC 32-bit,
+        # misalnya) dengan galat baca yang sama bentuknya seperti file terpotong.
+        # Yang pertama bukan kerusakan: filenya utuh, cuma tak terukur di sini.
+        if "unimplemented format" in str(e).lower():
+            return ProbeResult(status="unknown", error=str(e))
         return ProbeResult(status="corrupt", error=str(e))
 
     result.sample_rate = sr
