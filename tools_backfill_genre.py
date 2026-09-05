@@ -1,4 +1,4 @@
-"""Isi tag genre yang kosong dari iTunes Search API.
+"""Isi tag genre yang kosong dari iTunes Search API, lalu Deezer.
 
 Modul tidal tidak pernah menulis genre, jadi 1385 dari 1459 file di
 G:\\Music\\Library tidak punya. Yang 73 file punya datang dari modul applemusic,
@@ -33,6 +33,17 @@ TAK_KETEMU = "genre_tak_ketemu.txt"
 # iTunes Search API tanpa kunci dibatasi sekitar 20 permintaan per menit.
 JEDA = 3.0
 API = "https://itunes.apple.com/search"
+DEEZER = "https://api.deezer.com"
+# Deezer memakai istilah sendiri. Yang berbeda dipetakan ke istilah Apple supaya
+# satu library tidak memakai dua sistem penamaan.
+PETA_DEEZER = {
+    "Rap/Hip Hop": "Hip-Hop/Rap",
+    "R&B": "R&B/Soul",
+    "Electro": "Electronic",
+    "Films/Games": "Soundtrack",
+    "Musique brésilienne": "Brazilian",
+    "Musiques du monde": "Worldwide",
+}
 # Katalog US tidak memuat sebagian rilis Indonesia, Jepang, dan Mandarin.
 NEGARA = ("US", "ID", "JP")
 
@@ -108,6 +119,41 @@ def tanya(artist, title, negara):
     return hasil
 
 
+def tanya_deezer(artist, title):
+    """Genre dari Deezer, atau None.
+
+    Katalog Deezer memuat rilis Indonesia dan Jepang yang tidak ada di Apple.
+    Genre-nya menempel di album, bukan di lagu, jadi perlu dua permintaan.
+    """
+    query = urllib.parse.urlencode({"q": f"{artist} {title}", "limit": 5})
+    try:
+        with urllib.request.urlopen(f"{DEEZER}/search?{query}", timeout=20) as resp:
+            hasil = json.load(resp).get("data", [])
+    except Exception as e:
+        print(f"  [DEEZER-ERR] {artist} - {title}: {e}")
+        return None
+
+    t = bagian_judul(title)
+    for r in hasil:
+        if not (t & bagian_judul(r.get("title", ""))):
+            continue
+        if not cocok_artis(artist, (r.get("artist") or {}).get("name", "")):
+            continue
+        album = (r.get("album") or {}).get("id")
+        if not album:
+            continue
+        try:
+            with urllib.request.urlopen(f"{DEEZER}/album/{album}", timeout=20) as resp:
+                genre = json.load(resp).get("genres") or {}
+        except Exception as e:
+            print(f"  [DEEZER-ERR] album {album}: {e}")
+            return None
+        nama = [g["name"] for g in genre.get("data", []) if g.get("name")]
+        if nama:
+            return PETA_DEEZER.get(nama[0], nama[0])
+    return None
+
+
 def cari(artist, title, cache, ulang_gagal=False):
     """Genre untuk satu lagu. Jawaban API disimpan supaya tidak ditembak dua kali."""
     kunci_cache = f"{artist}|{title}"
@@ -123,6 +169,9 @@ def cari(artist, title, cache, ulang_gagal=False):
         # Kalau lagunya ada tapi ditolak, mengulang di wilayah lain sia-sia.
         if hasil:
             break
+    if not genre:
+        genre = tanya_deezer(artist, title)
+        time.sleep(0.3)
     cache[kunci_cache] = genre
     return genre
 
