@@ -9,13 +9,13 @@
 soniq_csv     = 'D:\College Project\music\OrpheusDL-master\soniqtools-batch-2026-07-04.csv'
 
 # Folder tempat FLAC tersimpan (yang dianalisis Soniq Tools)
-music_folder  = 'D:\Music\New folder (2)\Mix\MIXING'
+music_folder  = 'F:\sorted'
 
 # Folder root OrpheusDL (tempat orpheus.py berada)
-orpheus_dir   = 'D:\College Project\music\OrpheusDL-master'
+orpheus_dir   = 'D:\Project\College Project\music\OrpheusDL-master'
 
 # Folder backup untuk file fake (jika delete_fake_files = false)
-backup_folder = 'D:\Music\New folder (2)\Mix\MIXING\_FAKE_BACKUP'
+backup_folder = 'F:\sorted\_FAKE_BACKUP'
 
 # File log (auto-rotate: max 5MB × 3 file)
 log_file      = 'orpheus_healer_log.txt'
@@ -28,14 +28,13 @@ delay_between_downloads = 3
 # true = hapus file fake, false = backup ke backup_folder
 delete_fake_files = false
 
-# Verdict Soniq yang dipakai untuk memilih kandidat dari CSV.
-# Ini data Soniq, bukan penilaian kita sendiri.
+# Nilai kolom Verdict yang dipakai untuk memilih kandidat dari CSV.
+# Sekarang diisi status dari quality_probe.inspect(), bukan verdict Soniq:
+# CSV kandidat dibuat dari hasil scan_library.py (path -> File, status -> Verdict).
+# Kalau kembali memakai CSV Soniq, kembalikan daftar verdict Soniq di sini.
 soniq_flags = [
-    "Upsampled / Transcoded",
-    "Lossy Transcode",
-    "Low-Bitrate Lossy",
-    "Possibly Upsampled",
-    "Error",
+    "suspect",
+    "corrupt",
 ]
 
 # Status hasil pengukuran yang membuat file hasil download ditolak.

@@ -51,6 +51,7 @@ from difflib import SequenceMatcher
 from logging.handlers import RotatingFileHandler
 
 from quality_probe import inspect
+from scan_library import LOSSLESS_CODECS, codec_of
 
 # ── Fallback tomllib for Python < 3.11 ───────────────────────────────────────
 try:
@@ -227,19 +228,47 @@ def validate_csv_columns(csv_path: str) -> tuple[bool, list[str]]:
         return False, [str(e)]
 
 
-def _parse_filename(filepath: str) -> tuple[str, list[str]]:
-    """Extract title dan artists dari path/nama file."""
+def _is_lossless(filepath: str) -> bool:
+    """Codec file menurut isi container, bukan menurut ekstensinya.
+
+    Sebuah .m4a bisa berisi ALAC yang lossless atau AAC yang lossy, jadi nama
+    file tidak menjawab apa-apa. File yang tidak terbaca dianggap tidak
+    lossless: tidak terbukti, jadi tidak diterima.
+    """
+    codec, _ = codec_of(Path(filepath))
+    return any(c in codec for c in LOSSLESS_CODECS)
+
+
+def _split_artists(raw: str) -> list[str]:
+    return [a.strip() for a in re.split(r"[;,&_]", raw) if a.strip()]
+
+
+def _parse_track(filepath: str) -> tuple[str, list[str]]:
+    """Ambil title dan artists dari tag file; nama file cuma cadangan.
+
+    Tag lebih dipercaya karena nama file sudah kehilangan karakter terlarang:
+    'ꝸ' menggantikan '&', '᳓' menggantikan apostrof, dan pemisah artis-judul
+    kerap jadi '_' sehingga tidak bisa dipecah. Tag tetap terbaca pada file
+    yang audionya rusak, karena kerusakannya ada di frame, bukan di header.
+    """
+    try:
+        import mutagen
+        audio = mutagen.File(filepath, easy=True)
+        if audio:
+            title = (audio.get("title") or [""])[0].strip()
+            if title:
+                artist_raw = (audio.get("artist") or [""])[0].strip()
+                return title, _split_artists(artist_raw)
+    except Exception as e:
+        log.debug(f"[TAG] Gagal baca tag {filepath}: {e}")
+
     stem = Path(filepath).stem
+    stem = _DUP_MARKER_RE.sub(" ", stem)
     stem = re.sub(r"^\d+[\.\s]+", "", stem).strip()
     if " - " in stem:
         parts       = stem.split(" - ", 1)
-        artists_raw = parts[0].strip()
-        title       = parts[1].strip()
-        artists     = [a.strip() for a in re.split(r"[;,&_]", artists_raw) if a.strip()]
-    else:
-        title   = stem
-        artists = []
-    return title, artists
+        return parts[1].strip(), _split_artists(parts[0].strip())
+    return stem, []
 
 
 def parse_soniq_csv(csv_path: str, soniq_flags: list[str]) -> list[dict]:
@@ -272,7 +301,7 @@ def parse_soniq_csv(csv_path: str, soniq_flags: list[str]) -> list[dict]:
             filepath = row.get("File", "").strip()
             filename = Path(filepath).name if filepath else ""
             fmt      = row.get(fmt_col, "").strip().upper() if fmt_col else ""
-            title, artists = _parse_filename(filepath)
+            title, artists = _parse_track(filepath)
             duration_str   = row.get(dur_col, "").strip() if dur_col else ""
 
             def _safe_float(val, default=None):
@@ -956,6 +985,11 @@ def _download_from_source(track: dict, orpheus_dir: str, module: str,
     try:
         result = subprocess.run(
             cmd, cwd=orpheus_dir, capture_output=True,
+            # stdin ditutup: kalau modul bertanya sesuatu (misal Tidal minta
+            # relogin), stdout-nya ditangkap sehingga pertanyaannya tak pernah
+            # terlihat. Tanpa ini prosesnya menunggu ketikan sampai timeout 300
+            # detik, diam, per source per track.
+            stdin=subprocess.DEVNULL,
             text=True, timeout=300, encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
@@ -1045,6 +1079,22 @@ def redownload_with_fallback(
                 os.remove(new_file)
             except OSError as e:
                 log.debug(f"  [ID-FAIL] Gagal hapus: {e}")
+            attempts.append(attempt)
+            continue
+
+        # Pengganti wajib lossless. Tanpa syarat ini AAC 256 dari Apple Music
+        # lolos, karena inspect() memulangkan "unknown" untuk .m4a dan
+        # "unknown" bukan status yang ditolak — FLAC asli akan tergantikan
+        # oleh file lossy.
+        if not _is_lossless(new_file):
+            codec, kbps = codec_of(Path(new_file))
+            log.warning(f"  {C.YELLOW}[LOSSY] {label} → {codec}"
+                        f"{f' {kbps}kbps' if kbps else ''}, bukan lossless. "
+                        f"File dihapus, skip ke source berikutnya.{C.RESET}")
+            try:
+                os.remove(new_file)
+            except OSError as e:
+                log.debug(f"  [LOSSY] Gagal hapus: {e}")
             attempts.append(attempt)
             continue
 
@@ -1392,11 +1442,6 @@ def main():
         if fp and os.path.exists(fp):
             preserved_tags = extract_custom_tags(fp, preserve_tags_list)
 
-        if track.get("file_path"):
-            handle_fake_file(track,
-                             delete=CONFIG["settings"]["delete_fake_files"],
-                             backup_folder=CONFIG["paths"]["backup_folder"])
-
         fb = redownload_with_fallback(
             track,
             orpheus_dir    = orpheus_dir,
@@ -1409,6 +1454,14 @@ def main():
 
         track["fallback_result"] = fb
         status = fb["status"]
+
+        # File lama baru dipindah setelah penggantinya benar-benar ada. Kalau
+        # dipindah lebih dulu, unduhan yang gagal meninggalkan lubang: aslinya
+        # sudah pergi dari folder mood dan tidak ada yang menggantikan.
+        if status != "all_failed" and track.get("file_path"):
+            handle_fake_file(track,
+                             delete=CONFIG["settings"]["delete_fake_files"],
+                             backup_folder=CONFIG["paths"]["backup_folder"])
 
         if status in ("verified", "accepted"):
             m      = fb["measurement"]
