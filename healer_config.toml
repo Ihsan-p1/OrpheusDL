@@ -6,16 +6,16 @@
 
 [paths]
 # Path ke file CSV dari Soniq Tools (File → Export → CSV)
-soniq_csv     = 'D:\College Project\music\OrpheusDL-master\soniqtools-batch-2026-07-04.csv'
+soniq_csv     = 'heal_wave2_kuat.csv'
 
 # Folder tempat FLAC tersimpan (yang dianalisis Soniq Tools)
-music_folder  = 'F:\sorted'
+music_folder  = 'G:\Music\Library'
 
 # Folder root OrpheusDL (tempat orpheus.py berada)
 orpheus_dir   = 'D:\Project\College Project\music\OrpheusDL-master'
 
 # Folder backup untuk file fake (jika delete_fake_files = false)
-backup_folder = 'F:\sorted\_FAKE_BACKUP'
+backup_folder = 'G:\Music\_FAKE_BACKUP'
 
 # File log (auto-rotate: max 5MB × 3 file)
 log_file      = 'orpheus_healer_log.txt'
