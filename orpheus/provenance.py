@@ -1,8 +1,8 @@
-"""Catatan asal-usul file: modul, tier, codec, waktu unduh.
+"""The download record of a file: module, tier, codec, download time.
 
-Disimpan di dalam tag file, bukan di database terpisah. File di library sering
-dipindah dan diganti nama, dan index yang memakai path sebagai kunci akan putus
-begitu itu terjadi.
+Kept inside the file's own tags rather than in a separate database. Files in
+the library get moved and renamed often, and an index keyed by path breaks the
+moment that happens.
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def _pairs(prov: Provenance) -> list[tuple[str, str]]:
 
 
 def write_provenance(file_path: str, container: ContainerEnum, prov: Provenance) -> None:
-    """Tulis provenance ke tag file. Tag lain tidak disentuh."""
+    """Write the provenance into the file's tags. Other tags are left alone."""
     if container is ContainerEnum.flac:
         tagger = FLAC(file_path)
         for key, value in _pairs(prov):
@@ -86,7 +86,7 @@ def write_provenance(file_path: str, container: ContainerEnum, prov: Provenance)
         for key, value in _pairs(prov):
             tagger.tags.add(TXXX(encoding=3, desc=key, text=value))
     else:
-        raise ValueError(f"container tidak didukung untuk provenance: {container}")
+        raise ValueError(f"container not supported for provenance: {container}")
     tagger.save()
 
 
@@ -101,7 +101,7 @@ def _flatten(value) -> str:
 
 
 def read_provenance(file_path: str) -> Provenance | None:
-    """Baca provenance dari file. Kembalikan None kalau tidak ada."""
+    """Read the provenance from a file. Returns None when there is none."""
     try:
         audio = mutagen.File(file_path)
     except Exception:

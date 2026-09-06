@@ -1,4 +1,4 @@
-"""Uji kecil untuk orpheus_healer: parsing judul dan penolakan file lossy."""
+"""Small tests for orpheus_healer: title parsing and rejecting lossy files."""
 
 import os
 import shutil
@@ -17,9 +17,9 @@ def _lavfi(path, *extra):
 
 
 def test_tags_win_over_filename():
-    """Tag dipakai kalau ada, nama file yang bertentangan diabaikan."""
+    """Tags are used when present, a contradicting filename is ignored."""
     if not shutil.which("ffmpeg"):
-        print("lewat: ffmpeg tidak ada")
+        print("skipped: no ffmpeg")
         return
     from mutagen.flac import FLAC
 
@@ -40,9 +40,9 @@ def test_tags_win_over_filename():
 
 
 def test_aac_is_not_accepted_as_lossless():
-    """AAC dalam .m4a ditolak walau ekstensinya tidak menyebut codec."""
+    """AAC inside an .m4a is rejected even though the extension names no codec."""
     if not shutil.which("ffmpeg"):
-        print("lewat: ffmpeg tidak ada")
+        print("skipped: no ffmpeg")
         return
     tmp = tempfile.mkdtemp()
     try:
@@ -57,18 +57,18 @@ def test_aac_is_not_accepted_as_lossless():
 
 
 def test_unreadable_file_is_not_lossless():
-    assert _is_lossless("Z:/tidak-ada/x.flac") is False
+    assert _is_lossless("Z:/does-not-exist/x.flac") is False
 
 
 def test_filename_fallback_strips_corrupted_marker():
-    """File tak terbaca: jatuh ke nama file, marker duplikat dibuang."""
-    title, artists = _parse_track("Z:/tidak-ada/Adele - Hello [CORRUPTED].flac")
+    """Unreadable file: falls back to the filename, the dupe marker is dropped."""
+    title, artists = _parse_track("Z:/does-not-exist/Adele - Hello [CORRUPTED].flac")
     assert title == "Hello", title
     assert artists == ["Adele"], artists
 
 
 def test_filename_fallback_plain():
-    title, artists = _parse_track("Z:/tidak-ada/Adele - Hello.flac")
+    title, artists = _parse_track("Z:/does-not-exist/Adele - Hello.flac")
     assert title == "Hello", title
     assert artists == ["Adele"], artists
 

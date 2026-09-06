@@ -1,7 +1,7 @@
-"""Pengukuran kualitas audio yang bisa diulang.
+"""Repeatable audio quality measurements.
 
-Modul ini tidak mengeluarkan verdict. Ia melaporkan angka yang bisa diukur
-ulang dengan hasil sama, dan diam untuk hal yang tidak bisa dibuktikan.
+This module hands down no verdict. It reports numbers that measure the same on
+every run, and stays quiet about anything it cannot prove.
 """
 from __future__ import annotations
 
@@ -46,17 +46,18 @@ class ProbeResult:
 
 def median_spectrum(path: str, n_windows: int = N_WINDOWS,
                     n_samples: int = N_SAMPLES) -> tuple[np.ndarray, np.ndarray, int]:
-    """Ambil beberapa jendela FFT sepanjang track, kembalikan median spektrumnya.
+    """Take several FFT windows across the track and return the median spectrum.
 
-    Satu jendela di tengah track membuat hasil berubah-ubah tergantung isi
-    bagian itu. Median dari beberapa posisi tetap sama setiap kali dijalankan.
+    A single window in the middle of a track makes the result swing with
+    whatever happens to be playing there. The median of several positions comes
+    out the same on every run.
     """
     spectra = []
     with sf.SoundFile(path) as af:
         sr = af.samplerate
         total = len(af)
         if total < n_samples:
-            raise ValueError(f"file terlalu pendek: {total} frame")
+            raise ValueError(f"file too short: {total} frames")
         window = np.hanning(n_samples)
         for fraction in np.linspace(0.2, 0.8, n_windows):
             start = max(0, int(total * fraction) - n_samples // 2)
@@ -72,7 +73,7 @@ def median_spectrum(path: str, n_windows: int = N_WINDOWS,
             db = 20.0 * np.log10(np.maximum(magnitude, 1e-12))
             spectra.append(db - db.max())
     if not spectra:
-        raise ValueError("tidak ada jendela yang bisa dibaca")
+        raise ValueError("no readable window")
     freqs = np.fft.rfftfreq(n_samples, d=1.0 / sr)
     median = np.median(np.vstack(spectra), axis=0)
     return freqs, median - median.max(), sr
@@ -80,12 +81,12 @@ def median_spectrum(path: str, n_windows: int = N_WINDOWS,
 
 def smooth_spectrum(freqs: np.ndarray, db: np.ndarray,
                     width_hz: float = SMOOTH_HZ) -> np.ndarray:
-    """Ratakan spektrum di sumbu frekuensi.
+    """Smooth the spectrum along the frequency axis.
 
-    Satu bin FFT di sini lebarnya sepersekian hertz dan nilainya melompat
-    puluhan dB antar bin. Tanpa perataan, lembah acak terbaca sebagai tebing
-    encoder. Tepi spektrum dipad dengan nilai tepinya sendiri supaya pita
-    tertinggi, yang justru paling penting di sini, tidak ikut tertarik.
+    One FFT bin here is a fraction of a hertz wide and its value jumps tens of
+    dB from bin to bin. Without smoothing, a random dip reads as an encoder
+    cliff. The edges are padded with their own edge value so the highest band,
+    the one that matters most here, is not dragged down.
     """
     bin_hz = float(freqs[1] - freqs[0])
     width = max(1, int(width_hz / bin_hz))
@@ -97,21 +98,23 @@ def smooth_spectrum(freqs: np.ndarray, db: np.ndarray,
 def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
                        min_drop_db: float = CLIFF_MIN_DROP_DB,
                        span_hz: float = CLIFF_SPAN_HZ) -> tuple[float | None, float | None]:
-    """Cari tebing encoder: energi jatuh tajam lalu tidak pernah kembali.
+    """Find the encoder cliff: energy drops hard and never comes back.
 
-    Syarat kedua yang membedakan tebing dari rolloff biasa. Rekaman asli boleh
-    saja sepi di frekuensi tinggi, tapi turunnya landai dan energinya masih
-    naik turun di atas sana. Encoder memotong, lalu tidak ada apa-apa lagi.
+    The second condition is what separates a cliff from an ordinary rolloff. A
+    genuine recording may well be quiet up high, but it fades gently and its
+    energy still moves up there. An encoder cuts, and after that there is
+    nothing at all.
 
-    Tebing di bawah CLIFF_MIN_HZ diabaikan. Tidak ada encoder yang memotong di
-    sana, jadi jatuh tajam sebesar itu berasal dari isi rekamannya sendiri,
-    biasanya piano atau instrumen tunggal yang spektrumnya memang sepi.
+    Cliffs below CLIFF_MIN_HZ are ignored. No encoder cuts down there, so a
+    drop that steep comes from the recording's own content, usually a piano or
+    another solo instrument whose spectrum is simply empty.
 
-    Syarat ketiga: pita di atas tebing harus mati, bukan cuma sepi. Encoder
-    menulis nol di sana, jadi variasinya di bawah satu dB. Rolloff alami yang
-    menukik ke arah Nyquist juga turun 30 dB dalam satu kHz dan juga tidak
-    pernah kembali, tapi isinya masih bergerak 7 sampai 21 dB. Tanpa syarat ini
-    159 file dengan rolloff biasa di 20,5 kHz terbaca bertebing encoder.
+    Third condition: the band above the cliff has to be dead, not merely quiet.
+    An encoder writes zeroes there, so its variation stays under a dB. A
+    natural rolloff diving toward Nyquist also drops 30 dB inside a kilohertz
+    and also never recovers, but its content still moves 7 to 21 dB. Without
+    this condition, 159 files with an ordinary rolloff at 20.5 kHz read as
+    having an encoder cliff.
     """
     bin_hz = float(freqs[1] - freqs[0])
     span = max(1, int(span_hz / bin_hz))
@@ -132,14 +135,14 @@ def find_lowpass_cliff(freqs: np.ndarray, db: np.ndarray,
 
 
 def dead_band(freqs: np.ndarray, db: np.ndarray) -> tuple[float | None, float | None]:
-    """Ukur seberapa hidup pita frekuensi teratas dibanding pita tengah.
+    """Measure how alive the top frequency band is next to a middle band.
 
-    Rekaman asli punya lantai noise yang bergerak naik turun di sana, bahkan
-    ketika isinya sangat sepi. Encoder yang memotong meninggalkan pita yang
-    rata tanpa gerakan sama sekali. Yang membedakan bukan seberapa sepi, tapi
-    ada atau tidaknya variasi.
+    A genuine recording has a noise floor that moves up there even when the
+    content is very quiet. An encoder that cuts leaves a band that is flat,
+    with no movement at all. What tells them apart is not how quiet it is but
+    whether anything varies.
 
-    Kembalikan (standar deviasi pita atas, jarak ke pita tengah) dalam dB.
+    Returns (top band standard deviation, gap to the middle band) in dB.
     """
     nyquist = float(freqs[-1])
     top = db[(freqs >= DEAD_BAND_RANGE[0] * nyquist) & (freqs <= DEAD_BAND_RANGE[1] * nyquist)]
@@ -151,11 +154,11 @@ def dead_band(freqs: np.ndarray, db: np.ndarray) -> tuple[float | None, float | 
 
 
 def bit_depths(path: str, n_frames: int = 500_000) -> tuple[int | None, int | None]:
-    """Bandingkan bit depth yang dideklarasikan dengan yang benar-benar dipakai.
+    """Compare the declared bit depth with the one actually in use.
 
-    soundfile menaruh sampel di bit teratas int32, jadi jumlah bit nol di bawah
-    memberitahu berapa bit yang sebenarnya terisi. File 24-bit yang isinya
-    16-bit dipadding punya delapan bit nol lebih banyak dari seharusnya.
+    soundfile puts the samples in the top bits of an int32, so the number of
+    zero bits underneath says how many bits are really filled. A 24-bit file
+    holding padded 16-bit content has eight more zero bits than it should.
     """
     with sf.SoundFile(path) as af:
         subtype = af.subtype or ""
@@ -177,14 +180,14 @@ def bit_depths(path: str, n_frames: int = 500_000) -> tuple[int | None, int | No
 
 
 def probe(path: str) -> ProbeResult:
-    """Ukur satu file dan laporkan bukti keras yang ditemukan."""
+    """Measure one file and report the hard evidence it finds."""
     if not os.path.exists(path):
-        return ProbeResult(status="corrupt", error="file tidak ditemukan")
+        return ProbeResult(status="corrupt", error="file not found")
 
     extension = os.path.splitext(path)[1].lower()
     if extension not in SIGNAL_EXTENSIONS:
         return ProbeResult(status="unknown",
-                           error=f"probe sinyal tidak berlaku untuk {extension}")
+                           error=f"signal probe does not apply to {extension}")
 
     result = ProbeResult()
     try:
@@ -194,9 +197,10 @@ def probe(path: str) -> ProbeResult:
         result.error = str(e)
         return result
     except Exception as e:
-        # libsndfile menolak format yang tidak diimplementasikannya (FLAC 32-bit,
-        # misalnya) dengan galat baca yang sama bentuknya seperti file terpotong.
-        # Yang pertama bukan kerusakan: filenya utuh, cuma tak terukur di sini.
+        # libsndfile refuses formats it has not implemented (32-bit FLAC, for
+        # one) with a read error shaped exactly like the one a truncated file
+        # gives. The first is not damage: the file is whole, only unmeasurable
+        # here.
         if "unimplemented format" in str(e).lower():
             return ProbeResult(status="unknown", error=str(e))
         return ProbeResult(status="corrupt", error=str(e))
@@ -211,30 +215,30 @@ def probe(path: str) -> ProbeResult:
     try:
         result.declared_bit_depth, result.effective_bit_depth = bit_depths(path)
     except Exception as e:
-        result.error = f"bit depth tak terbaca: {e}"
+        result.error = f"bit depth unreadable: {e}"
 
     if result.cutoff_hz is not None and result.cutoff_hz < CLIFF_SUSPECT_MAX_HZ:
         result.reasons.append(
-            f"tebing lowpass {result.cutoff_hz / 1000:.1f} kHz "
-            f"turun {result.cutoff_drop_db:.0f} dB")
+            f"lowpass cliff {result.cutoff_hz / 1000:.1f} kHz "
+            f"dropping {result.cutoff_drop_db:.0f} dB")
 
     if (result.top_band_std_db is not None
             and result.top_band_std_db < DEAD_BAND_MAX_STD_DB
             and result.top_band_gap_db >= DEAD_BAND_MIN_GAP_DB):
         result.reasons.append(
-            f"pita atas mati: variasi cuma {result.top_band_std_db:.1f} dB, "
-            f"{result.top_band_gap_db:.0f} dB di bawah pita tengah")
+            f"dead top band: only {result.top_band_std_db:.1f} dB of variation, "
+            f"{result.top_band_gap_db:.0f} dB below the middle band")
 
     if sr >= 88200 and result.highest_energy_hz < UPSAMPLE_MIN_HZ:
         result.reasons.append(
-            f"dideklarasikan {sr / 1000:.1f} kHz tapi energi berhenti di "
+            f"declared {sr / 1000:.1f} kHz but energy stops at "
             f"{result.highest_energy_hz / 1000:.1f} kHz")
 
     if (result.declared_bit_depth and result.effective_bit_depth
             and result.effective_bit_depth <= result.declared_bit_depth - 8):
         result.reasons.append(
-            f"{result.declared_bit_depth}-bit tapi cuma "
-            f"{result.effective_bit_depth} bit yang terisi")
+            f"{result.declared_bit_depth}-bit but only "
+            f"{result.effective_bit_depth} bits filled")
 
     result.status = "suspect" if result.reasons else "unknown"
     return result
@@ -246,10 +250,10 @@ LOSSLESS_EXTENSIONS = (".flac", ".wav", ".aiff", ".aif", ".alac")
 
 
 def classify(result: ProbeResult, prov: Provenance | None, file_path: str) -> str:
-    """Gabungkan bukti provenance dan bukti sinyal jadi satu status.
+    """Fold provenance evidence and signal evidence into one status.
 
-    Provenance menang atas analisis sinyal. Kalau kita tahu file datang dari
-    modul apa dengan codec apa, tidak ada gunanya menebak lewat FFT.
+    Provenance beats signal analysis. Once we know which module a file came
+    from and with which codec, there is nothing to gain from guessing by FFT.
     """
     if result.status == "corrupt":
         return "corrupt"
@@ -266,7 +270,7 @@ def classify(result: ProbeResult, prov: Provenance | None, file_path: str) -> st
 
 
 def inspect(file_path: str) -> tuple[str, ProbeResult, Provenance | None]:
-    """Baca provenance, ukur sinyal, kembalikan status akhir."""
+    """Read the provenance, measure the signal, return the final status."""
     prov = read_provenance(file_path)
     result = probe(file_path)
     return classify(result, prov, file_path), result, prov

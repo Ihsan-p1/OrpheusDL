@@ -1,22 +1,22 @@
-"""Satukan lagu yang punya lebih dari satu file di G:\\Music\\Library.
+"""Fold together songs that have more than one file in G:\\Music\\Library.
 
-check_duplicates.py mencocokkan nama file, jadi satu lagu yang tersimpan
-sebagai "Peace Sign.flac" dan "Geek Music - My Hero Academia - Peace Sign -
-Season 2 Opening Theme.flac" lolos. Pengelompokan di sini pakai tag artist dan
-title, yang sama di kedua file itu.
+check_duplicates.py matches filenames, so one song stored as "Peace Sign.flac"
+and as "Geek Music - My Hero Academia - Peace Sign - Season 2 Opening
+Theme.flac" slips through. Grouping here uses the artist and title tags, which
+are the same in both files.
 
-Yang disimpan: berprovenance dulu, lalu bit depth, sample rate, ukuran. Yang
-kalah dipindah ke _FAKE_BACKUP, tidak dihapus. Playlist ditulis ulang supaya
-entrinya menunjuk file yang disimpan.
+What is kept: provenance first, then bit depth, sample rate, size. The losers
+are moved to _FAKE_BACKUP, not deleted. The playlists are rewritten so their
+entries point at the file that was kept.
 
-File hanya dilepas kalau MD5 audio mentahnya sama dengan yang disimpan. FLAC
-menyimpan MD5 itu sendiri di blok STREAMINFO, jadi kesamaan isi bisa dibuktikan
-sampel per sampel, bukan disimpulkan dari nama, durasi, atau ukuran. Grup yang
-MD5 anggotanya berbeda dilaporkan dan dibiarkan utuh: durasi boleh sama persis
-sementara isinya master yang berbeda.
+A file is only released when its raw audio MD5 matches the keeper's. FLAC
+stores that MD5 itself in the STREAMINFO block, so identical content can be
+proven sample by sample instead of inferred from the name, the duration or the
+size. A group whose members differ in MD5 is reported and left whole: durations
+can match exactly while the content is a different master.
 
-    python tools_dupes_by_tag.py            # laporan saja
-    python tools_dupes_by_tag.py --apply    # pindahkan dan tulis ulang playlist
+    python tools_dupes_by_tag.py            # report only
+    python tools_dupes_by_tag.py --apply    # move files and rewrite playlists
 """
 import collections
 import os
@@ -36,73 +36,78 @@ PLAYLISTS = r"G:\Music\Playlists"
 BACKUP = r"G:\Music\_FAKE_BACKUP"
 AUDIO = (".flac", ".m4a", ".mp3")
 
+# Files released before this script was translated carry the older "_kembar_"
+# marker instead. Nothing reads the marker back, it only keeps the backup
+# folder readable by eye.
+DUPE_MARKER = "_dupe_"
 
-# Tanda baca kana. Ikut dibuang bersama aksen lain, "が" jadi "か" dan itu kata
-# yang berbeda, jadi keduanya dikecualikan dari pelipatan.
-KANA_SUARA = {"\u3099", "\u309a"}
+# Kana voicing marks. Stripped along with the other accents, "が" becomes "か"
+# and that is a different word, so both are held back from the folding.
+KANA_VOICE_MARKS = {"\u3099", "\u309a"}
 
 
-def normal(s):
-    """Kecilkan huruf, lipat aksen, satukan pemisah jadi spasi.
+def normalize(s):
+    """Lowercase, fold accents, turn every separator into a space.
 
-    \W dengan flag unicode, bukan [^a-z0-9]: judul Jepang habis kalau non-ASCII
-    ikut dibuang, dan semua judul CJK menyatu jadi satu grup palsu.
+    \\W with the unicode flag, not [^a-z0-9]: a Japanese title is wiped out if
+    non-ASCII is dropped, and every CJK title then collapses into one bogus
+    group.
 
-    Aksen dilipat karena tag dan katalog sering menulis nama yang sama dengan
-    huruf berbeda: "JAŸ-Z" untuk "JAY-Z", "Bouwéy" untuk "Bouwey".
+    Accents are folded because tags and catalogues often write the same name
+    with different letters: "JAŸ-Z" for "JAY-Z", "Bouwéy" for "Bouwey".
     """
-    urai = unicodedata.normalize("NFKD", s.lower())
-    tanpa_aksen = "".join(c for c in urai
-                          if unicodedata.category(c) != "Mn" or c in KANA_SUARA)
-    # Disusun ulang supaya tanda suara menempel lagi ke kananya; kalau dibiarkan
-    # terpisah, \W+ mengubahnya jadi spasi dan memotong satu huruf jadi dua.
-    rapat = unicodedata.normalize("NFC", tanpa_aksen)
-    return re.sub(r"\W+", " ", rapat, flags=re.UNICODE).strip()
+    decomposed = unicodedata.normalize("NFKD", s.lower())
+    without_accents = "".join(c for c in decomposed
+                              if unicodedata.category(c) != "Mn" or c in KANA_VOICE_MARKS)
+    # Recomposed so a voicing mark attaches to its kana again; left apart, \\W+
+    # turns it into a space and cuts one letter into two.
+    recomposed = unicodedata.normalize("NFC", without_accents)
+    return re.sub(r"\W+", " ", recomposed, flags=re.UNICODE).strip()
 
 
-def kunci(tags):
-    """(artist, title) yang sudah dinormalisasi, atau None kalau judulnya kosong."""
+def tag_key(tags):
+    """The normalized (artist, title), or None when the title is empty."""
     artist = (tags.get("artist") or tags.get("albumartist") or [""])[0]
     title = (tags.get("title") or [""])[0]
-    bersih = (normal(artist), normal(title))
-    return bersih if bersih[1] else None
+    cleaned = (normalize(artist), normalize(title))
+    return cleaned if cleaned[1] else None
 
 
-def md5_audio(path):
-    """MD5 audio mentah dari STREAMINFO, atau None kalau bukan FLAC."""
+def audio_md5(path):
+    """The raw audio MD5 from STREAMINFO, or None when the file is not FLAC."""
     try:
         return FLAC(path).info.md5_signature or None
     except Exception:
         return None
 
 
-def peringkat(berkas):
-    """Kunci urut: makin besar makin layak disimpan."""
-    return (berkas["provenance"] is not None, berkas["bits"],
-            berkas["rate"], berkas["size"])
+def rank(entry):
+    """Sort key: the higher it sorts, the more the file deserves to be kept."""
+    return (entry["provenance"] is not None, entry["bits"],
+            entry["rate"], entry["size"])
 
 
-def pilah(files):
-    """Bagi satu grup jadi (yang disimpan, yang dilepas, yang dibiarkan).
+def split_group(files):
+    """Split one group into (keeper, released, left alone).
 
-    Yang dilepas hanya file yang MD5 audionya sama persis dengan yang disimpan.
-    Tanpa MD5, misalnya pada m4a dan mp3, tidak ada bukti isinya sama, jadi
-    tidak ada yang dilepas.
+    Only files whose audio MD5 matches the keeper's exactly are released.
+    Without an MD5, as with m4a and mp3, there is no proof the content is the
+    same, so nothing is released.
     """
-    files = sorted(files, key=peringkat, reverse=True)
-    simpan = files[0]
-    kembaran = [f for f in files[1:]
-                if simpan["md5"] is not None and f["md5"] == simpan["md5"]]
-    lain = [f for f in files[1:] if f not in kembaran]
-    return simpan, kembaran, lain
+    files = sorted(files, key=rank, reverse=True)
+    keeper = files[0]
+    copies = [f for f in files[1:]
+              if keeper["md5"] is not None and f["md5"] == keeper["md5"]]
+    others = [f for f in files[1:] if f not in copies]
+    return keeper, copies, others
 
 
-def kumpulkan(library):
-    """Kelompokkan file audio per (artist, title)."""
-    grup = collections.defaultdict(list)
-    for nama in sorted(os.listdir(library)):
-        path = os.path.join(library, nama)
-        if not (os.path.isfile(path) and nama.lower().endswith(AUDIO)):
+def collect_groups(library):
+    """Group the audio files by (artist, title)."""
+    groups = collections.defaultdict(list)
+    for name in sorted(os.listdir(library)):
+        path = os.path.join(library, name)
+        if not (os.path.isfile(path) and name.lower().endswith(AUDIO)):
             continue
         try:
             tags = mutagen.File(path, easy=True)
@@ -110,99 +115,100 @@ def kumpulkan(library):
             continue
         if not tags:
             continue
-        k = kunci(tags)
-        if not k:
+        key = tag_key(tags)
+        if not key:
             continue
-        grup[k].append({
-            "nama": nama, "path": path,
+        groups[key].append({
+            "name": name, "path": path,
             "provenance": read_provenance(path),
             "bits": getattr(tags.info, "bits_per_sample", 0),
             "rate": getattr(tags.info, "sample_rate", 0),
             "size": os.path.getsize(path),
-            "durasi": tags.info.length,
-            "md5": md5_audio(path),
+            "duration": tags.info.length,
+            "md5": audio_md5(path),
         })
-    return grup
+    return groups
 
 
-def tulis_ulang(baris, ganti):
-    """Petakan entri playlist ke file yang disimpan, buang entri kembar.
+def rewrite_playlist(lines, replacements):
+    """Map playlist entries onto the kept file and drop the duplicate entries.
 
-    `ganti` memetakan nama file yang dilepas ke nama file penggantinya. Urutan
-    entri dipertahankan; entri yang jadi sama setelah dipetakan hanya disisakan
-    satu.
+    `replacements` maps the name of a released file to the name of the file
+    replacing it. Entry order is preserved; entries that become identical after
+    the mapping are kept once.
     """
-    keluar, terlihat = [], set()
-    for b in baris:
-        s = b.strip()
-        if not s or s.startswith("#"):
-            keluar.append(b)
+    out, seen = [], set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
             continue
-        induk, nama = os.path.split(s)
-        nama = ganti.get(nama, nama)
-        entri = f"{induk}/{nama}" if induk else nama
-        if entri not in terlihat:
-            terlihat.add(entri)
-            keluar.append(entri)
-    return keluar
+        parent, name = os.path.split(stripped)
+        name = replacements.get(name, name)
+        entry = f"{parent}/{name}" if parent else name
+        if entry not in seen:
+            seen.add(entry)
+            out.append(entry)
+    return out
 
 
 def main():
     apply = "--apply" in sys.argv
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    kembar = {k: v for k, v in kumpulkan(LIBRARY).items() if len(v) > 1}
+    dupes = {k: v for k, v in collect_groups(LIBRARY).items() if len(v) > 1}
 
-    ganti, lepas, bytes_lepas, dilewati = {}, [], 0, []
-    for (artist, title), files in sorted(kembar.items()):
-        simpan, kembaran, lain = pilah(files)
-        if kembaran:
+    replacements, released, bytes_released, skipped = {}, [], 0, []
+    for (artist, title), files in sorted(dupes.items()):
+        keeper, copies, others = split_group(files)
+        if copies:
             print(f"\n[{artist} - {title}]")
-            print(f"  SIMPAN {simpan['nama']}")
-            for f in kembaran:
-                print(f"  LEPAS  {f['nama']}  ({f['size'] / 1048576:.1f} MB)")
-                ganti[f["nama"]] = simpan["nama"]
-                lepas.append(f)
-                bytes_lepas += f["size"]
-        if lain:
-            dilewati.append((artist, title, [simpan] + lain if not kembaran else lain))
+            print(f"  KEEP    {keeper['name']}")
+            for f in copies:
+                print(f"  RELEASE {f['name']}  ({f['size'] / 1048576:.1f} MB)")
+                replacements[f["name"]] = keeper["name"]
+                released.append(f)
+                bytes_released += f["size"]
+        if others:
+            skipped.append((artist, title, [keeper] + others if not copies else others))
 
-    for artist, title, files in dilewati:
-        print(f"\n[DIBIARKAN audio berbeda] {artist} - {title}")
+    for artist, title, files in skipped:
+        print(f"\n[LEFT ALONE, audio differs] {artist} - {title}")
         for f in files:
-            print(f"  {f['nama']}  ({f['durasi']:.1f} detik, {f['bits']}bit/{f['rate']}Hz)")
+            print(f"  {f['name']}  ({f['duration']:.1f} s, {f['bits']}bit/{f['rate']}Hz)")
 
-    print(f"\n{len(kembar)} grup kembar, {len(dilewati)} dibiarkan karena audionya "
-          f"berbeda, {len(lepas)} file dilepas, {bytes_lepas / 1048576:.0f} MB.")
+    print(f"\n{len(dupes)} duplicate groups, {len(skipped)} left alone because the "
+          f"audio differs, {len(released)} files released, "
+          f"{bytes_released / 1048576:.0f} MB.")
 
     if not apply:
-        print("\nLaporan saja. Jalankan dengan --apply untuk memindahkan.")
+        print("\nReport only. Run with --apply to move the files.")
         return
 
     os.makedirs(BACKUP, exist_ok=True)
-    pindah = 0
-    for f in lepas:
-        base, ext = os.path.splitext(f["nama"])
-        shutil.move(f["path"], os.path.join(BACKUP, f"{base}_kembar_{stamp}{ext}"))
-        lirik = os.path.splitext(f["path"])[0] + ".lrc"
-        if os.path.exists(lirik):
-            shutil.move(lirik, os.path.join(BACKUP, f"{base}_kembar_{stamp}.lrc"))
-        pindah += 1
+    moved = 0
+    for f in released:
+        base, ext = os.path.splitext(f["name"])
+        shutil.move(f["path"], os.path.join(BACKUP, f"{base}{DUPE_MARKER}{stamp}{ext}"))
+        lyrics = os.path.splitext(f["path"])[0] + ".lrc"
+        if os.path.exists(lyrics):
+            shutil.move(lyrics, os.path.join(BACKUP, f"{base}{DUPE_MARKER}{stamp}.lrc"))
+        moved += 1
 
-    arsip = os.path.join(PLAYLISTS, f"sumber_{stamp}")
-    os.makedirs(arsip, exist_ok=True)
-    for nama in sorted(os.listdir(PLAYLISTS)):
-        path = os.path.join(PLAYLISTS, nama)
-        if not (os.path.isfile(path) and nama.lower().endswith(".m3u8")):
+    archive = os.path.join(PLAYLISTS, f"source_{stamp}")
+    os.makedirs(archive, exist_ok=True)
+    for name in sorted(os.listdir(PLAYLISTS)):
+        path = os.path.join(PLAYLISTS, name)
+        if not (os.path.isfile(path) and name.lower().endswith(".m3u8")):
             continue
-        shutil.copy2(path, os.path.join(arsip, nama))
+        shutil.copy2(path, os.path.join(archive, name))
         with open(path, encoding="utf-8") as fh:
-            baris = fh.read().splitlines()
-        baru = tulis_ulang(baris, ganti)
+            lines = fh.read().splitlines()
+        new_lines = rewrite_playlist(lines, replacements)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("\n".join(baru) + "\n")
-        print(f"  [PLAYLIST] {nama}: {len(baris)} entri -> {len(baru)}")
+            fh.write("\n".join(new_lines) + "\n")
+        print(f"  [PLAYLIST] {name}: {len(lines)} entries -> {len(new_lines)}")
 
-    print(f"\n{pindah} file dipindah ke {BACKUP}. Playlist lama disalin ke {arsip}.")
+    print(f"\n{moved} files moved to {BACKUP}. Old playlists copied to {archive}.")
 
 
 if __name__ == "__main__":

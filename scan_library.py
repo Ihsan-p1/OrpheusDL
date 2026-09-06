@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Sensus kualitas seluruh folder musik.
+"""Quality census of a whole music folder.
 
-Berjalan rekursif, mengukur setiap file lewat quality_probe.inspect(), dan
-menulis satu baris CSV per file plus ringkasan rasio FLAC / ALAC / lossy.
+Walks recursively, measures every file through quality_probe.inspect(), and
+writes one CSV row per file plus a summary of the FLAC / ALAC / lossy ratio.
 
     python scan_library.py --target-dir "D:\\Music\\sorted"
-    python scan_library.py --target-dir "D:\\Music\\sorted" --csv laporan.csv --workers 4
+    python scan_library.py --target-dir "D:\\Music\\sorted" --csv report.csv --workers 4
 
-Status yang dipakai sama dengan quality_probe: verified, suspect, unknown,
-corrupt. File .m4a selalu unknown dari sisi sinyal karena probe menolak
-memaksakan parser FLAC padanya, jadi kolom codec dari mutagen yang memisahkan
-ALAC (lossless) dari AAC dan EAC3 (lossy).
+The statuses are the ones quality_probe uses: verified, suspect, unknown,
+corrupt. An .m4a is always unknown on the signal side because the probe refuses
+to force a FLAC parser onto it, so it is mutagen's codec column that separates
+ALAC (lossless) from AAC and EAC3 (lossy).
 """
 
 from __future__ import annotations
@@ -48,13 +48,13 @@ CONTAINER_CODECS = {
 
 
 def codec_of(path: Path) -> tuple[str, int | None]:
-    """Codec dan bitrate menurut mutagen. Ekstensi saja tidak cukup: setiap
-    .m4a bisa berisi ALAC yang lossless atau AAC yang lossy.
+    """Codec and bitrate according to mutagen. The extension alone is not
+    enough: any .m4a can hold lossless ALAC or lossy AAC.
 
-    Codec diambil dari tipe container, bukan dari nama kelas info. Kelas info
-    FLAC bernama StreamInfo, jadi nama kelas tidak menyebut codec sama sekali.
-    Hanya MP4 yang punya atribut info.codec, dan di situlah ALAC dan AAC perlu
-    dipisahkan.
+    The codec comes from the container type rather than from the info class
+    name. FLAC's info class is called StreamInfo, so the class name does not
+    name the codec at all. Only MP4 has an info.codec attribute, and that is
+    exactly where ALAC and AAC need separating.
     """
     try:
         f = mutagen.File(str(path))
@@ -123,8 +123,8 @@ def scan_one(path_str: str) -> dict:
 
 
 def rows_from_csv(path: str) -> list[dict]:
-    """Baca kembali hasil pemindaian. CSV mengembalikan semuanya sebagai string,
-    jadi kolom yang dipakai ringkasan dikembalikan ke tipe aslinya."""
+    """Read a scan back in. CSV returns everything as a string, so the columns
+    the summary uses are put back into their own types."""
     with open(path, newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     for r in rows:
@@ -137,12 +137,12 @@ DEFAULT_EXCLUSION_FILE = "no_lossless_source.txt"
 
 
 def read_exclusions(path: str) -> set[str]:
-    """Baca daftar file yang memang tidak punya sumber lossless di mana pun.
+    """Read the list of files that have no lossless source anywhere.
 
-    Isinya nama file, satu per baris, tanda # untuk komentar. Pencocokan lewat
-    nama file dan bukan path utuh, supaya daftar yang sama berlaku untuk salinan
-    library di drive lain. Keanggotaan daftar ini keputusan manusia: tidak ada
-    cara mengukur ketiadaan sumber lossless dari file itu sendiri.
+    One filename per line, # for a comment. Matching goes by filename rather
+    than by full path, so the same list holds for a copy of the library on
+    another drive. Membership is a human decision: the absence of a lossless
+    source cannot be measured from the file itself.
     """
     if not path or not Path(path).is_file():
         return set()
@@ -159,11 +159,11 @@ def summarize(rows: list[dict], exclusions: set[str] | None = None) -> None:
     if exclusions:
         excluded = [r for r in rows if Path(r["path"]).name.lower() in exclusions]
         rows = [r for r in rows if Path(r["path"]).name.lower() not in exclusions]
-        print(f"{len(excluded)} file dikecualikan dari rasio: tidak ada sumber lossless-nya")
+        print(f"{len(excluded)} files excluded from the ratio: no lossless source exists")
 
     total = len(rows)
     if not total:
-        print("Tidak ada file audio ditemukan.")
+        print("No audio files found.")
         return
 
     by_status = Counter(r["status"] for r in rows)
@@ -172,7 +172,7 @@ def summarize(rows: list[dict], exclusions: set[str] | None = None) -> None:
     flac = [r for r in rows if r["codec"] == "flac"]
     alac = [r for r in rows if r["codec"] == "alac"]
 
-    print(f"\n{'=' * 62}\n RINGKASAN {total} FILE\n{'=' * 62}")
+    print(f"\n{'=' * 62}\n SUMMARY OF {total} FILES\n{'=' * 62}")
 
     print("\nStatus:")
     for status, n in by_status.most_common():
@@ -182,44 +182,44 @@ def summarize(rows: list[dict], exclusions: set[str] | None = None) -> None:
     for codec, n in by_codec.most_common():
         print(f"  {codec:<10} {n:>5}  {n / total * 100:5.1f}%")
 
-    print("\nRasio terhadap target:")
-    print(f"  FLAC     {len(flac):>5}  {len(flac) / total * 100:5.1f}%  (target minimal 95%, mundur 85%)")
-    print(f"  ALAC     {len(alac):>5}  {len(alac) / total * 100:5.1f}%  (target maksimal 10%, mundur 15%)")
+    print("\nRatio against the target:")
+    print(f"  FLAC     {len(flac):>5}  {len(flac) / total * 100:5.1f}%  (target at least 95%, fallback 85%)")
+    print(f"  ALAC     {len(alac):>5}  {len(alac) / total * 100:5.1f}%  (target at most 10%, fallback 15%)")
     print(f"  lossless {len(lossless):>5}  {len(lossless) / total * 100:5.1f}%")
     print(f"  lossy    {total - len(lossless):>5}  {(total - len(lossless)) / total * 100:5.1f}%")
 
     suspect = [r for r in rows if r["status"] == "suspect"]
     if suspect:
-        print(f"\n{len(suspect)} file suspect (lossless di luar, jejak encoder di dalam):")
+        print(f"\n{len(suspect)} suspect files (lossless outside, encoder traces inside):")
         for r in sorted(suspect, key=lambda r: r["cutoff_hz"] or 0)[:20]:
-            cut = f"tebing {r['cutoff_hz'] / 1000:.1f}kHz" if r["cutoff_hz"] else (r["reasons"] or "?")
+            cut = f"cliff {r['cutoff_hz'] / 1000:.1f}kHz" if r["cutoff_hz"] else (r["reasons"] or "?")
             print(f"  {cut:<22} {Path(r['path']).name}")
         if len(suspect) > 20:
-            print(f"  ... {len(suspect) - 20} lagi, lihat CSV")
+            print(f"  ... {len(suspect) - 20} more, see the CSV")
 
     corrupt = [r for r in rows if r["status"] == "corrupt"]
     if corrupt:
-        print(f"\n{len(corrupt)} file corrupt atau tidak terbaca:")
+        print(f"\n{len(corrupt)} corrupt or unreadable files:")
         for r in corrupt[:20]:
             print(f"  {r['error'] or '?'} :: {Path(r['path']).name}")
         if len(corrupt) > 20:
-            print(f"  ... {len(corrupt) - 20} lagi, lihat CSV")
+            print(f"  ... {len(corrupt) - 20} more, see the CSV")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Sensus kualitas folder musik")
-    parser.add_argument("--target-dir", help="Folder yang dipindai, rekursif")
-    parser.add_argument("--csv", default="scan_library_report.csv", help="Berkas CSV hasil")
-    parser.add_argument("--from-csv", help="Lewati pemindaian, cetak ringkasan dari CSV ini")
+    parser = argparse.ArgumentParser(description="Quality census of a music folder")
+    parser.add_argument("--target-dir", help="Folder to scan, recursively")
+    parser.add_argument("--csv", default="scan_library_report.csv", help="CSV file to write")
+    parser.add_argument("--from-csv", help="Skip the scan, print the summary from this CSV")
     parser.add_argument("--exclusion-list", default=DEFAULT_EXCLUSION_FILE,
-                        help="Daftar file tanpa sumber lossless, dikecualikan dari rasio")
+                        help="List of files with no lossless source, excluded from the ratio")
     parser.add_argument("--workers", type=int, default=0,
-                        help="Jumlah proses paralel. 0 memakai default ProcessPoolExecutor")
-    parser.add_argument("--limit", type=int, default=0, help="Berhenti setelah N file, untuk uji cepat")
+                        help="Number of parallel processes. 0 uses the ProcessPoolExecutor default")
+    parser.add_argument("--limit", type=int, default=0, help="Stop after N files, for a quick trial")
     args = parser.parse_args()
 
-    # Nama file bisa berisi aksara di luar codepage konsol Windows. Tanpa ini
-    # seluruh pemindaian selesai lalu mati saat mencetak baris pertama.
+    # A filename can hold characters outside the Windows console codepage.
+    # Without this the whole scan finishes and then dies printing its first row.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     exclusions = read_exclusions(args.exclusion_list)
@@ -229,12 +229,12 @@ def main() -> int:
         return 0
 
     if not args.target_dir:
-        print("[ERROR] --target-dir wajib kecuali memakai --from-csv")
+        print("[ERROR] --target-dir is required unless --from-csv is used")
         return 1
 
     target = Path(args.target_dir)
     if not target.is_dir():
-        print(f"[ERROR] Folder tidak ditemukan: {target}")
+        print(f"[ERROR] Folder not found: {target}")
         return 1
 
     files = sorted(
@@ -244,7 +244,7 @@ def main() -> int:
     if args.limit:
         files = files[:args.limit]
 
-    print(f"Memindai {len(files)} file audio di {target}")
+    print(f"Scanning {len(files)} audio files in {target}")
     if not files:
         return 0
 

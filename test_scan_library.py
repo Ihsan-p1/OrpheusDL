@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test scan_library.py. Jalankan: python test_scan_library.py"""
+"""Test scan_library.py. Run: python test_scan_library.py"""
 
 import io
 import sys
@@ -12,8 +12,8 @@ GROUND_TRUTH = Path(__file__).parent / "ground_truth"
 
 
 def test_codec_from_container_not_class_name():
-    """Kelas info FLAC bernama StreamInfo, jadi nama kelas tidak menyebut codec.
-    Bug ini membuat setiap FLAC terbaca sebagai 'streaminfo' dan rasio nol."""
+    """FLAC's info class is called StreamInfo, so the class name names no codec.
+    This bug made every FLAC read as 'streaminfo' and the ratio come out zero."""
     codec, bitrate = codec_of(GROUND_TRUTH / "orig_1.flac")
     assert codec == "flac", codec
     assert bitrate and bitrate > 0, bitrate
@@ -36,18 +36,18 @@ def test_exclusions_ignore_comments_and_paths():
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "no_lossless_source.txt"
         p.write_text(
-            "# file tanpa sumber lossless\n"
+            "# files with no lossless source\n"
             "\n"
-            r"F:\sorted\Mood_Tenang\Sepi.flac  # rip YouTube" "\n"
-            "Cuma Nama.m4a\n",
+            r"F:\sorted\Mood_Tenang\Sepi.flac  # YouTube rip" "\n"
+            "Just A Name.m4a\n",
             encoding="utf-8",
         )
         names = read_exclusions(str(p))
-    assert names == {"sepi.flac", "cuma nama.m4a"}, names
+    assert names == {"sepi.flac", "just a name.m4a"}, names
 
 
 def test_missing_exclusion_file_is_empty_not_an_error():
-    assert read_exclusions("berkas-yang-tidak-ada.txt") == set()
+    assert read_exclusions("file-that-does-not-exist.txt") == set()
 
 
 def test_excluded_files_leave_the_ratio():
@@ -64,8 +64,8 @@ def test_excluded_files_leave_the_ratio():
     finally:
         sys.stdout = stdout
     text = out.getvalue()
-    assert "1 file dikecualikan" in text, text
-    assert "RINGKASAN 1 FILE" in text, text
+    assert "1 files excluded" in text, text
+    assert "SUMMARY OF 1 FILES" in text, text
     assert "FLAC         1  100.0%" in text, text
 
 
@@ -76,7 +76,7 @@ def test_csv_roundtrip_restores_types():
             "path,ext,codec,lossless,status,bitrate_kbps,sample_rate,"
             "declared_bit_depth,effective_bit_depth,cutoff_hz,top_band_std_db,"
             "provenance_module,provenance_codec,reasons,error\n"
-            "a.flac,.flac,flac,True,suspect,900,44100,16,16,16300.0,5.1,,,tebing,\n"
+            "a.flac,.flac,flac,True,suspect,900,44100,16,16,16300.0,5.1,,,cliff,\n"
             "b.m4a,.m4a,aac,False,unknown,256,44100,,,,,,,,\n",
             encoding="utf-8",
         )

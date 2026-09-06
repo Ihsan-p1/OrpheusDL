@@ -1,49 +1,50 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  healer_config.toml — Konfigurasi untuk Orpheus Healer v2.0
-#  Edit file ini sesuai path dan preferensi kamu.
-#  Script akan auto-reload config ini setiap dijalankan.
+#  healer_config.toml — configuration for Orpheus Healer v2.0
+#  Edit this file to match your own paths and preferences.
+#  The script reloads it on every run.
 # ═══════════════════════════════════════════════════════════════════════════
 
 [paths]
-# Path ke file CSV dari Soniq Tools (File → Export → CSV)
+# Path to the Soniq Tools CSV (File → Export → CSV)
 soniq_csv     = 'heal_wave2_kuat.csv'
 
-# Folder tempat FLAC tersimpan (yang dianalisis Soniq Tools)
+# Folder holding the FLACs, the one Soniq Tools analysed
 music_folder  = 'G:\Music\Library'
 
-# Folder root OrpheusDL (tempat orpheus.py berada)
+# The OrpheusDL root, where orpheus.py sits
 orpheus_dir   = 'D:\Project\College Project\music\OrpheusDL-master'
 
-# Folder backup untuk file fake (jika delete_fake_files = false)
+# Backup folder for the fake files, used when delete_fake_files = false
 backup_folder = 'G:\Music\_FAKE_BACKUP'
 
-# File log (auto-rotate: max 5MB × 3 file)
+# Log file, rotated automatically at 5MB × 3 files
 log_file      = 'orpheus_healer_log.txt'
 
 
 [settings]
-# Delay antar track (detik) — hindari rate limit
+# Pause between tracks in seconds, to stay under the rate limit
 delay_between_downloads = 3
 
-# true = hapus file fake, false = backup ke backup_folder
+# true = delete the fake files, false = move them to backup_folder
 delete_fake_files = false
 
-# Nilai kolom Verdict yang dipakai untuk memilih kandidat dari CSV.
-# Sekarang diisi status dari quality_probe.inspect(), bukan verdict Soniq:
-# CSV kandidat dibuat dari hasil scan_library.py (path -> File, status -> Verdict).
-# Kalau kembali memakai CSV Soniq, kembalikan daftar verdict Soniq di sini.
+# The Verdict column values that make a CSV row a candidate.
+# These now hold the statuses from quality_probe.inspect() rather than Soniq's
+# verdicts: the candidate CSV comes from scan_library.py, with path renamed to
+# File and status to Verdict. Going back to a Soniq CSV means putting the Soniq
+# verdict strings back here.
 soniq_flags = [
     "suspect",
     "corrupt",
 ]
 
-# Status hasil pengukuran yang membuat file hasil download ditolak.
-# Pilihan yang sah: "suspect", "corrupt", "unknown".
-# "unknown" tidak disarankan: sebagian besar file akan masuk kategori itu,
-# termasuk semua AAC 256 kbps ke atas yang memang tidak bisa dibuktikan.
+# The measured statuses that make a downloaded file unacceptable.
+# Valid values: "suspect", "corrupt", "unknown".
+# "unknown" is a bad idea: most files land in that category, including every
+# AAC at 256 kbps and above, which simply cannot be proven either way.
 redownload_status = ["suspect", "corrupt"]
 
-# Tag metadata yang di-preserve dari file asli ke file baru
+# Metadata tags carried over from the original file to the new one
 preserve_tags = [
     "comment",
     "rating",
@@ -59,10 +60,10 @@ preserve_tags = [
 
 
 # ── SOURCE PRIORITY ──────────────────────────────────────────────────────────
-# Urutan source yang dicoba jika track masih fake setelah download.
-# Module harus terinstall di modules/ dan sudah login!
-# Install: git clone <repo> modules/<nama>
-# Set enabled = true untuk mengaktifkan.
+# The order sources are tried in when a track is still fake after downloading.
+# A module has to be installed under modules/ and logged in.
+# Install: git clone <repo> modules/<name>
+# Set enabled = true to turn one on.
 
 [[source_priority]]
 module  = "tidal"
@@ -72,12 +73,12 @@ enabled = true
 [[source_priority]]
 module  = "qobuz"
 label   = "Qobuz"
-enabled = false   # set true jika punya akun Qobuz
+enabled = false   # set true if you have a Qobuz account
 
 [[source_priority]]
 module  = "deezer"
 label   = "Deezer HiFi"
-enabled = false   # set true jika punya akun Deezer
+enabled = false   # set true if you have a Deezer account
 
 [[source_priority]]
 module  = "applemusic"   # folder: modules/applemusic

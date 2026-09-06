@@ -1,4 +1,4 @@
-"""Test penulisan provenance. Jalankan: python test_provenance.py"""
+"""Test the provenance writing. Run: python test_provenance.py"""
 import os
 import shutil
 import sys
@@ -34,7 +34,7 @@ def test_roundtrip_flac():
     try:
         write_provenance(path, ContainerEnum.flac, SAMPLE)
         loaded = read_provenance(path)
-        assert loaded == SAMPLE, f"provenance berubah setelah dibaca ulang: {loaded}"
+        assert loaded == SAMPLE, f"the provenance changed when read back: {loaded}"
     finally:
         os.remove(path)
 
@@ -52,10 +52,10 @@ def test_existing_tags_survive():
     path = _temp_copy()
     try:
         tagger = FLAC(path)
-        tagger["title"] = "Judul Asli"
+        tagger["title"] = "Original Title"
         tagger.save()
         write_provenance(path, ContainerEnum.flac, SAMPLE)
-        assert FLAC(path)["title"] == ["Judul Asli"], "tag lain ikut terhapus"
+        assert FLAC(path)["title"] == ["Original Title"], "another tag was wiped out"
     finally:
         os.remove(path)
 

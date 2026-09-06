@@ -313,9 +313,9 @@ class Downloader:
         track_tags['explicit'] = ' [E]' if track_info.explicit else ''
         track_tags['artist'] = sanitise_name(track_info.artists[0])  # if len(track_info.artists) == 1 else 'Various Artists'
         codec = track_info.codec
-        # codec = apa yang dikirim modul, final_codec = hasil setelah codec_conversions.
-        # Dua-duanya dicatat: ALAC yang dikonversi ke FLAC tetap lossless, AAC yang
-        # dibungkus jadi FLAC tidak.
+        # codec = what the module served, final_codec = the result after
+        # codec_conversions. Both are recorded: ALAC converted to FLAC is still
+        # lossless, AAC wrapped into FLAC is not.
         final_codec = codec
 
         self.set_indent_number(indent_level)
@@ -651,8 +651,8 @@ class Downloader:
                 if old_track_location:
                     write_provenance(old_track_location, old_container, provenance)
             except Exception as e:
-                # Provenance gagal ditulis tidak boleh membatalkan unduhan yang sudah jadi
-                self.print(f'Warning: provenance tidak tertulis: {e}')
+                # A failed provenance write must not undo a finished download
+                self.print(f'Warning: provenance not written: {e}')
         except TagSavingFailure:
             self.print('Tagging failed, tags saved to text file')
         if delete_cover:

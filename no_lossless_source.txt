@@ -1,10 +1,10 @@
-# File yang tidak punya sumber lossless di mana pun.
-# Baris di sini dikeluarkan dari denominator rasio FLAC / ALAC oleh
-# scan_library.py. Pencocokan lewat nama file, bukan path.
+# Files that have no lossless source anywhere.
+# The lines here are dropped from the FLAC / ALAC ratio denominator by
+# scan_library.py. Matching goes by filename, not by path.
 #
-# Isi awal: setiap file lossy yang terukur di F:\sorted, diurut dari
-# bitrate terendah. Hapus baris mana pun yang sumber lossless-nya ternyata
-# ada, karena file itu seharusnya diperbaiki, bukan dikecualikan.
+# Seeded with every lossy file measured in F:\sorted, lowest bitrate first.
+# Delete any line whose lossless source turns out to exist, because that file
+# should be repaired rather than excluded.
 
 act ii · date @ 8 (feat. Drake) [remix].m4a  # eac3 ? kbps
 - Official髭男dism · Cry baby.m4a  # aac 96 kbps

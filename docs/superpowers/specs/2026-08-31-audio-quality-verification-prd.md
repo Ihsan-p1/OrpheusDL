@@ -1,150 +1,150 @@
-# PRD: Sistem verifikasi kualitas audio
+# PRD: audio quality verification system
 
-Tanggal: 2026-08-31
-Status: draft, menunggu review
+Date: 2026-08-31
+Status: draft, awaiting review
 Repo: OrpheusDL-master (fork)
 
-## Latar belakang
+## Background
 
-Pipeline sekarang menilai keaslian file lewat `analyze_flac_quality()` di `orpheus_healer.py`. Pengukuran terhadap fungsi itu menunjukkan tiga hal:
+The pipeline today judges whether a file is genuine through `analyze_flac_quality()` in `orpheus_healer.py`. Measuring that function shows three things:
 
-1. Dari 12 file ground-truth yang dibuat dengan ffmpeg (FLAC asli, dikonversi ke AAC/MP3/Opus, lalu dibungkus balik jadi FLAC), 12 lolos sebagai lossless. Termasuk MP3 128 kbps. Penyebabnya ada di `orpheus_healer.py:914`: rentang pengukuran slope diturunkan dari `cutoff_hz` dan dibatasi `cutoff_hz * 0.98`, jadi jendela pengukuran selalu berada di bawah tebing encoder dan tak pernah menyentuhnya.
-2. Verdict berubah tergantung posisi jendela FFT. Pada sampel 12 file, 4 file ganti verdict ketika jendela digeser antara 15% dan 85% durasi track.
-3. Threshold di `_THRESHOLDS` (92 / 72 / -4.5 / 62) tidak punya catatan asal, tidak punya test set, dan tidak punya angka error rate.
+1. Of the 12 ground-truth files built with ffmpeg (a genuine FLAC, converted to AAC/MP3/Opus, then wrapped back into FLAC), 12 pass as lossless. MP3 128 kbps included. The cause sits at `orpheus_healer.py:914`: the slope measurement range is derived from `cutoff_hz` and capped at `cutoff_hz * 0.98`, so the measurement window always sits below the encoder cliff and never touches it.
+2. The verdict changes with the position of the FFT window. Across the 12 sample files, 4 change verdict when the window is moved between 15% and 85% of the track's duration.
+3. The thresholds in `_THRESHOLDS` (92 / 72 / -4.5 / 62) have no recorded origin, no test set, and no error rate.
 
-Kosakata verdict yang dipakai dicomot dari kolom Verdict ekspor Soniq Tools, tapi tanpa dua sumbu bukti yang dipakai Soniq (Crest Factor dan Clipping). Salah satu label, "Natural Rolloff (Vintage Recording)", tidak pernah muncul sekali pun di empat ekspor Soniq yang ada di repo ini. Label itu buatan kode ini sendiri, dan label itulah yang meloloskan 12 file palsu tadi. Kecocokan verdict antara kedua tool, pada 120 file yang ada di CSV sekaligus ada di disk, adalah 54,2%.
+The verdict vocabulary was lifted from the Verdict column of a Soniq Tools export, but without the two axes of evidence Soniq uses (Crest Factor and Clipping). One of the labels, "Natural Rolloff (Vintage Recording)", never appears once in the four Soniq exports in this repo. That label is this code's own invention, and it is the one that let all 12 fakes through. Verdict agreement between the two tools, across the 120 files that are both in the CSV and on disk, is 54.2%.
 
-Ada juga batas fisik yang tak bisa dilewati tool mana pun: AAC 256 kbps ke atas tidak menyisakan artefak spektral. Deviasi rata-rata terhadap sumber cuma 0,12 sampai 0,23 dB di semua pita frekuensi, dan cutoff-nya identik di ambang -60, -80, -100, dan -120 dB. Spektrogram file asli dan hasil transcode AAC 256 tidak bisa dibedakan mata. Untuk modul Apple Music yang menyajikan AAC 256, analisis spektral tidak bisa membuktikan apa pun.
+There is also a physical limit no tool gets past: AAC at 256 kbps and above leaves no spectral artefact. Mean deviation from the source is only 0.12 to 0.23 dB across every frequency band, and the cutoff is identical at the -60, -80, -100 and -120 dB floors. Rendered as spectrograms, a genuine file and an AAC 256 transcode cannot be told apart by eye. For the Apple Music module, which serves AAC 256, spectral analysis proves nothing.
 
-## Tujuan
+## Goal
 
-Ganti sistem verdict yang menebak dengan sistem yang cuma melaporkan apa yang benar-benar bisa dibuktikan, dan mengaku tidak tahu untuk sisanya.
+Replace the guessing verdict system with one that reports only what can actually be proven, and admits it does not know about the rest.
 
-Ukuran keberhasilan:
+Measures of success:
 
-- Semua file palsu di set ground-truth pada 192 kbps ke bawah terdeteksi.
-- Tidak ada file asli di set ground-truth yang salah dituduh.
-- Verdict tidak berubah kalau analisis diulang pada file yang sama.
-- Setiap file hasil download baru punya catatan asal yang bisa dibaca ulang tanpa menganalisis audionya.
+- Every fake in the ground-truth set at 192 kbps and below is detected.
+- No genuine file in the ground-truth set is wrongly accused.
+- The verdict does not change when the analysis is repeated on the same file.
+- Every newly downloaded file carries a record of where it came from, readable without analysing its audio.
 
-## Bukan tujuan
+## Not the goal
 
-- Mendeteksi AAC 256 kbps ke atas. Tidak mungkin secara spektral, jadi tidak dijanjikan.
-- Menyapu ulang 2037 file di `F:\sorted`. File lama tidak disentuh kecuali detektor menemukan bukti keras.
-- Mengganti Adobe Audition atau Soniq Tools. Keduanya tetap dipakai manusia untuk memutus kasus sengketa.
-- Mengejar rasio 85% FLAC / 15% ALAC. Itu pekerjaan terpisah, walau PRD ini membuka jalannya lewat perbaikan config.
+- Detecting AAC at 256 kbps and above. Spectrally impossible, so not promised.
+- Re-sweeping the 2037 files in `F:\sorted`. Old files are left alone unless the detector finds hard evidence.
+- Replacing Adobe Audition or Soniq Tools. Both stay in human hands for settling disputed cases.
+- Chasing the 85% FLAC / 15% ALAC ratio. That is separate work, though this PRD clears the way for it through the config fixes.
 
-## Prinsip
+## Principles
 
-Provenance adalah bukti utama. Kalau kita tahu file diunduh dari modul mana, dengan tier apa, dan codec apa yang dikirim server, tidak ada gunanya menebak lewat FFT.
+Provenance is the primary evidence. Once we know which module a file was downloaded from, at which tier, and which codec the server sent, there is nothing to gain from guessing by FFT.
 
-Analisis sinyal cuma pelengkap, dan cuma untuk hal yang bisa diukur ulang dengan hasil sama. Sisanya dijawab "tidak diketahui". Status "tidak diketahui" bukan kegagalan sistem, itu jawaban yang jujur.
+Signal analysis is only a supplement, and only for what can be measured again with the same result. Everything else is answered with "unknown". A status of "unknown" is not a system failure, it is the honest answer.
 
-## Lapis 1: provenance
+## Layer 1: provenance
 
-Saat file selesai diunduh dan diberi tag, tulis asal-usulnya ke dalam tag file itu sendiri. Bukan ke database terpisah, karena file di `F:\sorted` sering dipindah dan diganti nama, dan index yang memakai path sebagai kunci akan langsung putus.
+When a file finishes downloading and gets tagged, write where it came from into that file's own tags. Not into a separate database, because files in `F:\sorted` get moved and renamed often, and an index keyed by path breaks the moment that happens.
 
-Field yang ditulis:
+The fields written:
 
-| Field | Isi | Sumber |
+| Field | Content | Source |
 |---|---|---|
-| `orpheus_source_module` | nama modul, misal `tidal`, `applemusic` | `self.service_name` |
-| `orpheus_quality_tier` | tier yang diminta, misal `HIFI`, `LOSSLESS` | `quality_tier` di `music_downloader.py:289` |
-| `orpheus_codec_served` | codec yang benar-benar dikirim modul | `download_info` / `codec` sebelum konversi |
-| `orpheus_codec_final` | codec setelah `codec_conversions` | codec saat `tag_file` dipanggil |
-| `orpheus_bitrate_kbps` | bitrate yang dilaporkan modul, kosongkan kalau tak ada | `TrackInfo` |
-| `orpheus_sample_rate` | sample rate sumber | `TrackInfo` |
-| `orpheus_bit_depth` | bit depth sumber, kosongkan untuk codec lossy | `TrackInfo` |
-| `orpheus_downloaded_at` | timestamp ISO 8601 UTC | waktu unduh |
-| `orpheus_version` | commit hash atau versi fork | build info |
+| `orpheus_source_module` | module name, e.g. `tidal`, `applemusic` | `self.service_name` |
+| `orpheus_quality_tier` | requested tier, e.g. `HIFI`, `LOSSLESS` | `quality_tier` in `music_downloader.py:289` |
+| `orpheus_codec_served` | the codec the module actually served | `download_info` / `codec` before conversion |
+| `orpheus_codec_final` | the codec after `codec_conversions` | the codec when `tag_file` is called |
+| `orpheus_bitrate_kbps` | bitrate as reported by the module, empty when absent | `TrackInfo` |
+| `orpheus_sample_rate` | source sample rate | `TrackInfo` |
+| `orpheus_bit_depth` | source bit depth, empty for a lossy codec | `TrackInfo` |
+| `orpheus_downloaded_at` | ISO 8601 UTC timestamp | download time |
+| `orpheus_version` | commit hash or fork version | build info |
 
-Penyimpanan: Vorbis comment untuk FLAC, Ogg, dan Opus. Freeform atom `----:com.orpheusdl:<field>` untuk MP4 dan M4A. TXXX frame untuk MP3. Semua lewat mutagen yang sudah dipakai `orpheus/tagging.py`.
+Storage: a Vorbis comment for FLAC, Ogg and Opus. The freeform atom `----:com.orpheusdl:<field>` for MP4 and M4A. A TXXX frame for MP3. All through the mutagen that `orpheus/tagging.py` already uses.
 
-Titik integrasi: `tag_file()` di `orpheus/tagging.py`, dipanggil dari `orpheus/music_downloader.py:625`. Panggilan itu terjadi setelah konversi codec, jadi di titik tersebut nilai `codec_served` dan `codec_final` dua-duanya sudah diketahui. Tanda tangan `tag_file()` ditambah satu parameter provenance berbentuk dict, dan parameter itu opsional supaya pemanggil lain tidak pecah.
+Integration point: `tag_file()` in `orpheus/tagging.py`, called from `orpheus/music_downloader.py:625`. That call happens after the codec conversion, so at that point both `codec_served` and `codec_final` are known. The signature of `tag_file()` gains one provenance parameter, a dict, and that parameter is optional so other callers do not break.
 
-Yang penting dicatat: `codec_served` yang berbeda dari `codec_final` bukan tanda file buruk. Konversi ALAC ke FLAC tetap lossless. Yang jadi bukti lossy adalah `codec_served` yang memang lossy, misalnya AAC atau EAC3.
+Worth recording: a `codec_served` that differs from `codec_final` is not a sign of a bad file. ALAC converted to FLAC is still lossless. What counts as evidence of lossy is a `codec_served` that is itself lossy, AAC or EAC3 for instance.
 
-## Lapis 2: detektor terukur
+## Layer 2: a measured detector
 
-Ganti isi `analyze_flac_quality()`. Fungsi baru tidak mengeluarkan verdict, cuma mengeluarkan pengukuran plus satu flag.
+Replace the body of `analyze_flac_quality()`. The new function hands down no verdict, only measurements plus one flag.
 
-Yang diukur:
+What is measured:
 
-Lowpass keras. Ambil lima jendela FFT yang tersebar merata antara 20% dan 80% durasi track, bukan satu jendela di tengah. Hitung median spektrum dari kelima jendela. Cari titik di mana energi jatuh 30 dB atau lebih dalam rentang 1 kHz. Laporkan frekuensinya dan besar jatuhnya. Tebing seperti ini muncul di MP3 dan AAC 192 kbps ke bawah, dan tidak muncul di file lossless. Pengukuran slope dilakukan di atas cutoff, bukan di bawahnya, karena itu bug yang meloloskan seluruh set ground-truth sekarang. Kalau kelima jendela sepakat ada tebing di bawah 19 kHz, file ditandai suspect.
+A hard lowpass. Take five FFT windows spread evenly between 20% and 80% of the track's duration, rather than one window in the middle. Compute the median spectrum of the five. Look for the point where energy falls 30 dB or more inside a 1 kHz span. Report the frequency and the size of the drop. A cliff like that appears in MP3 and AAC at 192 kbps and below, and does not appear in a lossless file. The slope is measured above the cutoff rather than below it, because measuring below is the bug that lets the entire current ground-truth set through. When all five windows agree on a cliff below 19 kHz, the file is marked suspect.
 
-Upsampling. Kalau file mendeklarasikan 96 kHz tapi tidak ada energi berarti di atas 22,05 kHz, isinya kemungkinan besar berasal dari 44,1 kHz. Laporkan frekuensi energi tertinggi terhadap Nyquist yang dideklarasikan. Ini bukti keras dan bisa diulang.
+Upsampling. When a file declares 96 kHz but has no meaningful energy above 22.05 kHz, its content almost certainly came from 44.1 kHz. Report the highest energy frequency against the declared Nyquist. This is hard evidence and it repeats.
 
-Pita atas mati. Ditambahkan setelah pengukuran: `fake_2_aac128` lolos dari detektor tebing karena sumbernya memang sudah sangat sepi di frekuensi tinggi (-88 dB pada 16 kHz), jadi pemotongan encoder cuma menghasilkan penurunan 16 dB. Yang membedakannya adalah variasi. Lantai noise rekaman asli bergerak naik turun (standar deviasi 5,0 sampai 7,4 dB di pita 82 sampai 97,5 persen Nyquist), sedangkan pita yang dinolkan encoder rata tanpa gerakan (2,4 sampai 2,6 dB). Pemisahannya bersih tanpa tumpang tindih pada set ground-truth.
+A dead top band. Added after the measurements: `fake_2_aac128` escapes the cliff detector because its source was already very quiet up high (-88 dB at 16 kHz), so the encoder's cut produced a drop of only 16 dB. What separates them is variation. The noise floor of a genuine recording moves up and down (standard deviation 5.0 to 7.4 dB in the band from 82 to 97.5 percent of Nyquist), while a band the encoder zeroed is flat and still (2.4 to 2.6 dB). The separation is clean, with no overlap, across the ground-truth set.
 
-Bit depth semu. Kalau file 24-bit tapi delapan bit terbawah selalu nol di seluruh sampel, isinya 16-bit yang dipadding. Cek langsung ke sampel integer, tidak perlu FFT.
+Padded bit depth. When a file is 24-bit but its lowest eight bits are always zero across every sample, its content is padded 16-bit. Check the integer samples directly, no FFT needed.
 
-Integritas decode. File yang gagal di-decode, terpotong, atau punya frame rusak ditandai corrupt. Ini kategori tersendiri, bukan masalah kualitas.
+Decode integrity. A file that fails to decode, is truncated, or has damaged frames is marked corrupt. That is its own category, not a quality problem.
 
-Yang tidak diukur, dan alasannya ditulis di kode: kecocokan dengan Crest Factor dan Clipping milik Soniq (tidak dihitung di sini), serta segala usaha membedakan AAC 256 ke atas dari lossless (tak ada artefak yang tersisa untuk diukur).
+What is not measured, with the reason written in the code: agreement with Soniq's Crest Factor and Clipping (not computed here), and any attempt to tell AAC 256 and above from lossless (there is no artefact left to measure).
 
-Fungsi ini juga menolak file `.m4a` secara eksplisit, bukan memaksakan parser FLAC ke atasnya seperti sekarang. Perilaku sekarang membuat setiap m4a mengembalikan "Cannot verify" dan mendapat skor terendah di ranking duplikat.
+The function also rejects an `.m4a` explicitly rather than forcing a FLAC parser onto it as it does now. The current behaviour makes every m4a return "Cannot verify" and take the lowest score in the duplicate ranking.
 
-## Lapis 3: status dan keputusan
+## Layer 3: status and decision
 
-Tiga status, tidak lebih.
+Three statuses, no more.
 
-`verified` diberikan kalau provenance menunjukkan codec yang diserve memang lossless (FLAC, ALAC) dari modul dan tier yang jelas. Tidak perlu analisis sinyal.
+`verified` is given when provenance shows the codec served was genuinely lossless (FLAC, ALAC) from a clear module and tier. No signal analysis needed.
 
-`suspect` diberikan kalau Lapis 2 menemukan bukti keras (lowpass di bawah 19 kHz, upsampling, atau bit depth semu), atau provenance menunjukkan codec lossy padahal file berekstensi lossless.
+`suspect` is given when Layer 2 finds hard evidence (a lowpass below 19 kHz, upsampling, or a padded bit depth), or when provenance shows a lossy codec inside a file with a lossless extension.
 
-`unknown` untuk sisanya, termasuk seluruh 2037 file lama yang tidak punya provenance dan tidak memicu detektor apa pun.
+`unknown` covers the rest, including all 2037 old files that have no provenance and trip no detector.
 
-Healer cuma memproses ulang file berstatus `suspect`. File `unknown` masuk laporan dan tidak disentuh. Ini keputusan sadar: menyapu ribuan file berdasarkan tebakan justru merusak file yang sebenarnya baik-baik saja.
+The healer reprocesses only files marked `suspect`. An `unknown` file goes into the report and is not touched. This is a deliberate decision: sweeping thousands of files on a guess damages files that were fine.
 
-## Yang dihapus
+## What gets removed
 
-- Semua string verdict lama: "Standard Quality (CD / Near-CD)", "True High-Resolution Audio", "Natural Rolloff (Vintage Recording)", "Possibly Upsampled", "Upsampled / Transcoded", "Lossy Transcode".
-- `is_truly_lossless()` beserta whitelist-nya.
-- `_VERDICT_SCORE` dan blok `[quality_score]` di `healer_config.toml`.
-- `bad_verdicts` di `healer_config.toml`.
+- Every old verdict string: "Standard Quality (CD / Near-CD)", "True High-Resolution Audio", "Natural Rolloff (Vintage Recording)", "Possibly Upsampled", "Upsampled / Transcoded", "Lossy Transcode".
+- `is_truly_lossless()` and its whitelist.
+- `_VERDICT_SCORE` and the `[quality_score]` block in `healer_config.toml`.
+- `bad_verdicts` in `healer_config.toml`.
 
-Dua hal terakhir itu saling bertentangan sekarang: config menyebut "Possibly Upsampled" perlu diperbaiki, sementara `is_truly_lossless()` menerimanya sebagai kualitas yang layak. Healer bisa menandai file, mengunduh ulang, lalu menerima pengganti dengan verdict yang sama persis.
+Those last two contradict each other as things stand: the config says "Possibly Upsampled" needs repair, while `is_truly_lossless()` accepts it as adequate quality. The healer can flag a file, redownload it, and then accept a replacement carrying exactly the same verdict.
 
-`check_duplicates.py` mengimpor `_VERDICT_SCORE`, jadi ranking duplikatnya ikut diganti. Urutan baru: file dengan provenance lossless menang, lalu bit depth dan sample rate lebih tinggi, lalu ukuran file lebih besar. Status `suspect` selalu kalah dari `unknown`.
+`check_duplicates.py` imports `_VERDICT_SCORE`, so its duplicate ranking is replaced too. The new order: a file with lossless provenance wins, then higher bit depth and sample rate, then larger file size. A `suspect` status always loses to `unknown`.
 
-## Perubahan config
+## Config changes
 
-Dua trap yang membuat target format tak mungkin tercapai:
+Two traps that make the format target unreachable:
 
-`advanced.codec_conversions` di `config/settings.json` memetakan `alac -> flac`. Selama setelan ini aktif, setiap unduhan ALAC dikonversi begitu tiba, jadi tidak akan pernah ada file ALAC di library. Pemetaan itu dihapus.
+`advanced.codec_conversions` in `config/settings.json` maps `alac -> flac`. While that setting is active, every ALAC download is converted on arrival, so an ALAC file can never exist in the library. That mapping is removed.
 
-`modules.applemusic.codec` diisi `"aac"`. ALAC adalah nilai yang sah (lihat `modules/applemusic/gamdl/gamdl/interface/enums.py`) dan `modules/applemusic/interface.py:218` sudah menggerbanginya pada `QualityEnum.LOSSLESS` atau `HIFI`. Nilainya diganti ke `"alac"`.
+`modules.applemusic.codec` is set to `"aac"`. ALAC is a valid value (see `modules/applemusic/gamdl/gamdl/interface/enums.py`) and `modules/applemusic/interface.py:218` already gates it on `QualityEnum.LOSSLESS` or `HIFI`. The value becomes `"alac"`.
 
-`healer_config.toml` kehilangan `bad_verdicts` dan `[quality_score]`, diganti satu setelan: status mana yang memicu unduh ulang. Defaultnya cuma `suspect`.
+`healer_config.toml` loses `bad_verdicts` and `[quality_score]`, replaced by a single setting: which status triggers a redownload. The default is `suspect` alone.
 
-## Cek
+## Checks
 
-Dua file test tanpa framework: `test_quality_probe.py` untuk detektor Lapis 2 dan `test_provenance.py` untuk penulisan tag. Keduanya jalan lewat `python test_<nama>.py`.
+Two test files, no framework: `test_quality_probe.py` for the Layer 2 detector and `test_provenance.py` for the tag writing. Both run through `python test_<name>.py`.
 
-Set ground-truth ada di `ground_truth/` di root repo, 370 MB, di luar git: 3 file FLAC asli dan 12 hasil transcode (aac128, aac256, aac320 untuk tiga sumber, plus mp3128, mp3320, opus128 untuk sumber pertama). Assertion:
+The ground-truth set lives in `ground_truth/` at the repo root, 370 MB, outside git: 3 genuine FLAC files and 12 transcodes (aac128, aac256, aac320 for three sources, plus mp3128, mp3320, opus128 for the first source). Assertions:
 
-- Kelima transcode 128 kbps (tiga AAC, satu MP3, satu Opus) keluar sebagai `suspect`.
-- MP3 320 kbps juga keluar `suspect`. Ini di luar dugaan awal: tebingnya ada di 19,2 kHz, malah lebih rendah daripada Opus 128 yang memotong di 19,7 kHz.
-- Ketiga file asli keluar bukan `suspect`.
-- Keenam transcode AAC 256 dan 320 kbps keluar `unknown`. Tidak ada satu pun yang punya tebing, dan variasi pita atasnya (4,6 sampai 7,4 dB) tumpang tindih persis dengan file asli (5,0 sampai 7,4 dB). Test menuliskan ini sebagai hasil yang diharapkan, bukan sebagai kegagalan.
-- Menjalankan detektor dua kali pada file yang sama memberi hasil identik.
+- All five 128 kbps transcodes (three AAC, one MP3, one Opus) come out `suspect`.
+- MP3 320 kbps comes out `suspect` too. That was not expected: its cliff sits at 19.2 kHz, lower even than Opus 128, which cuts at 19.7 kHz.
+- All three genuine files come out as something other than `suspect`.
+- All six AAC 256 and 320 kbps transcodes come out `unknown`. Not one has a cliff, and their top-band variation (4.6 to 7.4 dB) overlaps the genuine files (5.0 to 7.4 dB) exactly. The test records this as the expected result, not as a failure.
+- Running the detector twice on the same file gives identical results.
 
-Cara membuat ulang set ground-truth kalau hilang. Flag `-vn` wajib karena cover art tertanam adalah stream h264 yang merusak muxing m4a:
+How to rebuild the ground-truth set if it is lost. The `-vn` flag is required because embedded cover art is an h264 stream that breaks m4a muxing:
 
 ```shell
 ffmpeg -vn -i orig.flac -c:a aac -b:a 256k t.m4a && ffmpeg -vn -i t.m4a -c:a flac fake.flac
 ```
 
-## Pertanyaan terbuka
+## Open questions
 
-Tiga keputusan belum dikunci dan tidak menghalangi pekerjaan di PRD ini.
+Three decisions are not settled and none of them blocks the work in this PRD.
 
-Untuk apa 15% ALAC. FLAC dan ALAC dua-duanya lossless, jadi pembagiannya soal preferensi container, bukan kualitas, dan tidak menghemat ruang. Alasannya perlu ditulis sebelum rasio itu dijadikan target.
+What the 15% ALAC is for. FLAC and ALAC are both lossless, so the split is a container preference rather than a quality one, and it saves no space. The reason needs writing down before that ratio becomes a target.
 
-Batas tier C. Sebagian track tidak punya sumber lossless di mana pun, misalnya AAC 96 kbps dan satu rip dari video YouTube. Tier ketiga yang dikecualikan dari rasio membuat targetnya bisa dicapai, tapi syarat masuk tier itu belum didefinisikan.
+The boundary of tier C. Some tracks have no lossless source anywhere, AAC 96 kbps and one rip from a YouTube video for instance. A third tier excluded from the ratio makes the target reachable, but the criteria for entering that tier are not defined yet.
 
-Cara `check_duplicates.py` membandingkan antar playlist. Fungsi itu memakai `glob()`, bukan `rglob()`, jadi cuma melihat file yang langsung ada di dalam `--target-dir` dan tidak pernah masuk subfolder.
+How `check_duplicates.py` compares across playlists. It uses `glob()` rather than `rglob()`, so it sees only the files sitting directly inside `--target-dir` and never enters a subfolder.
 
-## Di luar cakupan
+## Out of scope
 
-Kelengkapan metadata (genre cuma ada di 1 dari 44 file di `downloads/`), pembersihan 19 duplikat di `F:\sorted\output`, dan stub `python orpheus.py settings ...` yang isinya `return  # TODO`. Semuanya nyata, tapi bukan bagian dari verifikasi kualitas.
+Metadata completeness (a genre exists on 1 of the 44 files in `downloads/`), clearing the 19 duplicates in `F:\sorted\output`, and the `python orpheus.py settings ...` stubs whose body is `return  # TODO`. All real, none part of quality verification.

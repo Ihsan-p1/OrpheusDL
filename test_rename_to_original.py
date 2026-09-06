@@ -1,4 +1,4 @@
-"""Cek rename_to_original: pengganti mendarat di tempat dan nama file lama."""
+"""Check rename_to_original: the replacement lands on the old file's path and name."""
 import os
 import tempfile
 
@@ -8,35 +8,35 @@ from orpheus_healer import rename_to_original
 def test():
     with tempfile.TemporaryDirectory() as d:
         library = os.path.join(d, "Library")
-        singgah = os.path.join(d, "_HEAL_STAGING")
+        staging = os.path.join(d, "_HEAL_STAGING")
         os.makedirs(library)
-        os.makedirs(singgah)
+        os.makedirs(staging)
 
-        old = os.path.join(library, "Artis - Lagu Lama.flac")
-        new = os.path.join(singgah, "01 Lagu (Remaster).m4a")
+        old = os.path.join(library, "Artist - Old Song.flac")
+        new = os.path.join(staging, "01 Song (Remaster).m4a")
         open(new, "w").close()
         open(os.path.splitext(new)[0] + ".lrc", "w").close()
 
-        # Pindah ke folder file lama, stem ikut yang lama, ekstensi ikut yang
-        # baru, lirik ikut.
-        hasil = rename_to_original(new, old)
-        assert hasil == os.path.join(library, "Artis - Lagu Lama.m4a"), hasil
-        assert os.path.exists(hasil)
-        assert os.path.exists(os.path.join(library, "Artis - Lagu Lama.lrc"))
+        # Moves into the old file's folder, keeps the old stem and the new
+        # extension, and takes the lyrics along.
+        result = rename_to_original(new, old)
+        assert result == os.path.join(library, "Artist - Old Song.m4a"), result
+        assert os.path.exists(result)
+        assert os.path.exists(os.path.join(library, "Artist - Old Song.lrc"))
         assert not os.path.exists(new)
 
-        # Sudah di tempat dan nama yang benar: tidak ada kerja.
-        assert rename_to_original(hasil, hasil) == hasil
+        # Already in the right place under the right name: nothing to do.
+        assert rename_to_original(result, result) == result
 
-        # Nama tujuan sudah terpakai: file unduhan dibiarkan, yang lama tidak
-        # ditimpa.
-        lain = os.path.join(singgah, "unduhan baru.m4a")
-        open(lain, "w").close()
-        assert rename_to_original(lain, old) == lain
-        assert os.path.exists(lain)
+        # The target name is taken: the download is left alone and the old file
+        # is not overwritten.
+        other = os.path.join(staging, "new download.m4a")
+        open(other, "w").close()
+        assert rename_to_original(other, old) == other
+        assert os.path.exists(other)
 
-        # File hilang atau argumen kosong: kembalikan apa adanya.
-        assert rename_to_original(os.path.join(singgah, "hantu.flac"), old).endswith("hantu.flac")
+        # Missing file or empty argument: hand back what came in.
+        assert rename_to_original(os.path.join(staging, "ghost.flac"), old).endswith("ghost.flac")
         assert rename_to_original("", old) == ""
 
     print("test_rename_to_original OK")

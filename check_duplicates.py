@@ -34,11 +34,11 @@ try:
         MUTAGEN_AVAILABLE
     )
 except ImportError as e:
-    print(f"[ERROR] Gagal mengimpor orpheus_healer.py: {e}")
-    print("Pastikan script ini diletakkan di folder yang sama dengan orpheus_healer.py.")
+    print(f"[ERROR] Could not import orpheus_healer.py: {e}")
+    print("Put this script in the same folder as orpheus_healer.py.")
     sys.exit(1)
 
-# Regex tambahan untuk mencocokkan suffix timestamp seperti _20260701_095825
+# An extra regex for the timestamp suffix, as in _20260701_095825
 _TIMESTAMP_RE = re.compile(r"_\d{8}_\d{6}")
 
 # Terminal colors definition
@@ -53,46 +53,48 @@ class Colors:
 
 def get_canonical_name(filename: str) -> str:
     """
-    Mengembalikan nama file canonical (bersih dari suffix timestamp dan duplicate marker),
-    dengan tetap mempertahankan casing asli dari nama file.
+    Return the canonical filename, clear of the timestamp suffix and the
+    duplicate marker, while keeping the original casing.
     """
     path = Path(filename)
     stem = path.stem
     ext = path.suffix
     
-    # 1. Hapus timestamp suffix
+    # 1. Drop the timestamp suffix
     stem = _TIMESTAMP_RE.sub("", stem)
-    # 2. Hapus duplicate marker
+    # 2. Drop the duplicate marker
     stem = _DUP_MARKER_RE.sub("", stem)
-    # 3. Normalisasi spasi berlebih
+    # 3. Collapse the extra whitespace
     stem = re.sub(r"\s+", " ", stem).strip()
     
     return stem + ext
 
 def normalize_for_grouping(filename: str) -> str:
     """
-    Normalisasi nama file khusus untuk grouping duplikat.
-    Menghapus timestamp, duplicate markers, menyamakan case, dan membersihkan separator.
+    Normalize a filename for duplicate grouping.
+    Drops the timestamp and the duplicate markers, folds the case, and cleans up
+    the separators.
     """
-    # 1. Hapus timestamp suffix dari stem
+    # 1. Drop the timestamp suffix from the stem
     path = Path(filename)
     stem = path.stem
     stem_no_ts = _TIMESTAMP_RE.sub("", stem)
     
-    # 2. Panggil normalisasi bawaan orpheus_healer (yang akan menghapus dup markers, lowercase, dll)
+    # 2. Hand it to orpheus_healer's own normalizer, which drops the dupe
+    #    markers, lowercases, and so on
     return _normalize_for_dedup(stem_no_ts + path.suffix)
 
 _STATUS_RANK = {"verified": 3, "unknown": 2, "suspect": 1, "corrupt": 0}
 
 
 def get_file_quality_score(file_path: Path) -> tuple:
-    """Tuple untuk mengurutkan duplikat. Makin besar makin dipilih.
+    """Sort key for duplicates. The higher it sorts, the more it is preferred.
 
-    Provenance menang lebih dulu, lalu bit depth, lalu ukuran file. Ukuran file
-    jadi penentu terakhir karena dua file lossless dengan isi sama seharusnya
-    berukuran mirip, dan yang lebih besar biasanya yang tidak terpotong.
+    Provenance wins first, then bit depth, then file size. Size decides last
+    because two lossless files with the same content should be about the same
+    size, and the larger one is usually the one that is not truncated.
 
-    Elemen terakhir adalah dict untuk ditampilkan, bukan untuk diurutkan.
+    The last element is a dict for display, not for sorting.
     """
     try:
         size_bytes = file_path.stat().st_size
@@ -131,13 +133,13 @@ def colorize_status(status: str) -> str:
 
 
 def _quality_line(display: dict) -> str:
-    """Satu baris ringkasan kualitas untuk ditampilkan."""
+    """A one-line quality summary for display."""
     sr = display.get("sample_rate") or 0
     sr_str = f"{sr/1000:.1f}kHz" if sr else "?"
     bd = display.get("bit_depth") or 0
     bd_str = f"{bd}bit" if bd else "?"
     co = display.get("cutoff_hz")
-    co_str = f" tebing {co/1000:.1f}kHz" if co is not None else ""
+    co_str = f" cliff {co/1000:.1f}kHz" if co is not None else ""
     src = display.get("provenance")
     src_str = f" | {src}" if src else ""
     return f"{colorize_status(display.get('status', '?'))} ({sr_str}/{bd_str}{co_str}){src_str}"
@@ -147,15 +149,15 @@ def _quality_line(display: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Audio Quality Duplicate Checker")
     parser.add_argument("--target-dir", default=r"D:\Music\New folder (2)\Mix\MIXING\flac", 
-                        help="Folder target yang berisi file FLAC untuk dicek")
+                        help="Target folder holding the FLAC files to check")
     parser.add_argument("--backup-dir", default=r"D:\Music\New folder (2)\Mix\MIXING\flac\_duplicates_backup",
-                        help="Folder tujuan untuk mem-backup duplikat")
+                        help="Folder the duplicates are backed up to")
     parser.add_argument("--delete", action="store_true", 
-                        help="Hapus file duplikat secara permanen (bukan backup)")
+                        help="Delete the duplicates permanently instead of backing them up")
     parser.add_argument("--dry-run", action="store_true", 
-                        help="Hanya preview duplikat tanpa memindahkan atau mengubah file")
+                        help="Preview the duplicates only, move and change nothing")
     parser.add_argument("--auto", action="store_true",
-                        help="Jalankan otomatis tanpa konfirmasi interaktif")
+                        help="Run without asking for confirmation")
     
     args = parser.parse_args()
     
@@ -176,7 +178,7 @@ def main():
     print("-" * 70)
     
     if not target_path.exists():
-        print(f"{Colors.RED}[ERROR] Folder target tidak ditemukan: {target_path}{Colors.RESET}")
+        print(f"{Colors.RED}[ERROR] Target folder not found: {target_path}{Colors.RESET}")
         sys.exit(1)
         
     # Scan files
@@ -186,7 +188,7 @@ def main():
     for ext in ("*.flac", "*.m4a"):
         all_files.extend(list(target_path.rglob(ext)))
         
-    print(f"Ditemukan {len(all_files)} file audio di disk.")
+    print(f"Found {len(all_files)} audio files on disk.")
     
     # Grouping by normalized name
     groups = {}
@@ -202,11 +204,11 @@ def main():
     dup_groups = {k: v for k, v in groups.items() if len(v) > 1}
     
     if not dup_groups:
-        print(f"\n{Colors.GREEN}[INFO] Tidak ada duplikat terdeteksi. Folder bersih!{Colors.RESET}\n")
+        print(f"\n{Colors.GREEN}[INFO] No duplicates found. The folder is clean.{Colors.RESET}\n")
         return
         
-    print(f"Terdeteksi {len(dup_groups)} grup duplikat (total {sum(len(v) for v in dup_groups.values())} file).\n")
-    print("Menganalisis kualitas audio untuk setiap duplikat...")
+    print(f"Found {len(dup_groups)} duplicate groups ({sum(len(v) for v in dup_groups.values())} files in total).\n")
+    print("Measuring the audio quality of every duplicate...")
     
     # Analyze quality and rank files in each group
     analyzed_groups = []
@@ -233,7 +235,7 @@ def main():
         
     # Show preview
     print("\n" + "="*70)
-    print(f" PREVIEW DUPLIKAT YANG TERDETEKSI")
+    print(f" PREVIEW OF THE DUPLICATES FOUND")
     print("="*70)
     
     for idx, group in enumerate(analyzed_groups, 1):
@@ -263,21 +265,21 @@ def main():
     print("\n" + "="*70)
     
     if args.dry_run:
-        print("[DRY RUN] Selesai. Tidak ada file yang diubah.")
+        print("[DRY RUN] Done. Nothing was changed.")
         return
         
     # Ask for confirmation
     if not args.auto:
-        confirm = input("Apakah Anda ingin memproses duplikat di atas? (y/N): ").strip().lower()
+        confirm = input("Process the duplicates listed above? (y/N): ").strip().lower()
         if confirm != 'y':
-            print("Dibatalkan.")
+            print("Cancelled.")
             return
 
     # Process files
     if not args.delete and not args.dry_run:
         backup_path.mkdir(parents=True, exist_ok=True)
         
-    print("\nMemulai pemrosesan...")
+    print("\nStarting...")
     
     removed_count = 0
     renamed_count = 0
@@ -288,7 +290,7 @@ def main():
         best_fp = best_entry["path"]
         canonical_name = get_canonical_name(best_fp.name)
         
-        # 1. Hapus atau backup file duplikat lainnya
+        # 1. Delete or back up the other duplicates
         for entry in group["others"]:
             fp = entry["path"]
             try:
@@ -297,38 +299,38 @@ def main():
                     print(f"  {Colors.RED}[DELETED]{Colors.RESET} {fp.name}")
                 else:
                     dest = backup_path / fp.name
-                    # Handle jika file backup dengan nama sama sudah ada
+                    # A backup file with the same name may already be there
                     if dest.exists():
                         dest.unlink()
                     shutil.move(str(fp), str(dest))
                     print(f"  {Colors.YELLOW}[BACKUPED]{Colors.RESET} {fp.name} -> backup")
                 removed_count += 1
             except Exception as e:
-                print(f"  {Colors.RED}[ERROR]{Colors.RESET} Gagal memproses {fp.name}: {e}")
+                print(f"  {Colors.RED}[ERROR]{Colors.RESET} Could not process {fp.name}: {e}")
                 error_count += 1
                 
-        # 2. Rename file terbaik ke nama canonical jika diperlukan dan tidak konflik
+        # 2. Rename the best file to the canonical name where needed and free
         if best_fp.name != canonical_name:
             dest_fp = best_fp.parent / canonical_name
             try:
                 if dest_fp.exists() and dest_fp.resolve() != best_fp.resolve():
-                    # Jika file canonical ada (sangat jarang jika grouping berjalan sempurna)
-                    print(f"  {Colors.YELLOW}[WARN]{Colors.RESET} Tidak bisa rename {best_fp.name} ke {canonical_name} karena file target sudah ada.")
+                    # The canonical name is taken, which is rare when grouping works
+                    print(f"  {Colors.YELLOW}[WARN]{Colors.RESET} Cannot rename {best_fp.name} to {canonical_name}, that name is taken.")
                 else:
                     best_fp.rename(dest_fp)
                     print(f"  {Colors.GREEN}[RENAMED]{Colors.RESET} {best_fp.name} -> {canonical_name}")
                     renamed_count += 1
             except Exception as e:
-                print(f"  {Colors.RED}[ERROR]{Colors.RESET} Gagal merename {best_fp.name} ke {canonical_name}: {e}")
+                print(f"  {Colors.RED}[ERROR]{Colors.RESET} Could not rename {best_fp.name} to {canonical_name}: {e}")
                 error_count += 1
                 
     print("\n" + "="*70)
-    print(f" {Colors.GREEN}{Colors.BOLD}PROSES SELESAI{Colors.RESET}")
+    print(f" {Colors.GREEN}{Colors.BOLD}DONE{Colors.RESET}")
     print("="*70)
-    action_verb = "dihapus" if args.delete else "di-backup"
-    print(f" Total file {action_verb} : {removed_count}")
-    print(f" Total file di-rename    : {renamed_count}")
-    print(f" Total error             : {error_count}")
+    action_verb = "deleted" if args.delete else "backed up"
+    print(f" Files {action_verb}     : {removed_count}")
+    print(f" Files renamed           : {renamed_count}")
+    print(f" Errors                  : {error_count}")
     print("="*70)
 
 if __name__ == "__main__":

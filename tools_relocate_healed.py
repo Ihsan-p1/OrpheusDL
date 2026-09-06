@@ -1,7 +1,8 @@
-"""Pindahkan file hasil healer dari akar F:\sorted ke folder mood asalnya.
+"""Move healer output from the root of F:\sorted back into its mood folder.
 
-Sekali pakai. Pemetaan dibaca dari session JSON healer:
-fallback_result.file_path = file baru di akar, file_path = lokasi asli.
+One-off. The mapping is read from the healer session JSON:
+fallback_result.file_path = the new file at the root, file_path = where it came
+from.
 """
 import json
 import os
@@ -19,7 +20,7 @@ for track in session["tracks"]:
     fallback = track.get("fallback_result") or {}
     src = fallback.get("file_path")
     if not src:
-        print(f"LEWAT  tidak ada file pengganti: {track['filename']}")
+        print(f"SKIP  no replacement file: {track['filename']}")
         skipped += 1
         continue
     src = os.path.normpath(src)
@@ -27,21 +28,21 @@ for track in session["tracks"]:
     dest = os.path.join(dest_dir, os.path.basename(src))
 
     if not os.path.exists(src):
-        print(f"LEWAT  sumber hilang: {src}")
+        print(f"SKIP  source is gone: {src}")
         skipped += 1
         continue
     if os.path.exists(dest):
-        print(f"LEWAT  tujuan sudah terisi: {dest}")
+        print(f"SKIP  destination already taken: {dest}")
         skipped += 1
         continue
     if not os.path.isdir(dest_dir):
-        print(f"LEWAT  folder tujuan tidak ada: {dest_dir}")
+        print(f"SKIP  destination folder does not exist: {dest_dir}")
         skipped += 1
         continue
 
-    print(f"{'DRY ' if DRY else ''}PINDAH {src}\n    -> {dest}")
+    print(f"{'DRY ' if DRY else ''}MOVE {src}\n    -> {dest}")
     if not DRY:
         shutil.move(src, dest)
     moved += 1
 
-print(f"\n{moved} dipindah, {skipped} dilewati" + (" (dry-run)" if DRY else ""))
+print(f"\n{moved} moved, {skipped} skipped" + (" (dry-run)" if DRY else ""))
