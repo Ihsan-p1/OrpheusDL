@@ -1,68 +1,119 @@
-# OrpheusDL (Customized Version)
+# OrpheusDL, customised fork
 
-A modular music archival tool written in Python, customized with high-performance asynchronous downloads, Apple Music integration, and automated quality repair tools.
+A fork of [OrfiTeam/OrpheusDL](https://github.com/OrfiTeam/OrpheusDL), a modular music
+archival tool in Python. This copy adds async downloads, an Apple Music module, and a set
+of tools for auditing and repairing a local library.
 
-## Key Additions & Features in this Fork
+Upstream documentation still applies for the module system, settings, and the built-in
+sources. What follows is what this fork adds.
 
-### 1. Orpheus Healer (`orpheus_healer.py`)
-An automated tool designed to clean up and repair your local music library:
-- **Audio Analysis Integration**: Reads CSV reports exported from **Soniq Tools**.
-- **Fuzzy Quality Repair**: Detects files flagged as upsampled, transcoded, or lossy transcode (*fake lossless*).
-- **Auto-Redownload**: Automatically attempts to fetch a true lossless version of the track from your active sources (Tidal, Apple Music, etc.).
-- **Metadata Preserving**: Preserves the original audio file's tags (like lyrics, ratings, replaygain, track IDs, etc.) and transfers them to the new file.
-- **Configurable**: Fully configured via [healer_config.toml](file:///d:/College%20Project/music/OrpheusDL-master/healer_config.toml).
+## Orpheus Healer (`orpheus_healer.py`)
 
-### 2. Apple Music Module (`modules/applemusic`)
-Allows direct, high-quality downloading from Apple Music:
-- **Widevine CDM Decryption**: Integrates the `gamdl` downloader library to download and decrypt Apple Music audio files using your Widevine Device (.wvd).
-- **Session Authentication**: Authenticates securely using browser cookies from [config/cookies.txt](file:///d:/College%20Project/music/OrpheusDL-master/config/cookies.txt).
-- **Fuzzy Match Fallback**: Used as a fallback download source for Orpheus Healer.
+Finds files in a local library that are not what their extension claims and replaces them.
 
-### 3. Core Enhancements & Optimization
-- **Asynchronous Downloading**: Replaced synchronous downloading with a highly-efficient async process (`aiohttp` + `aiofiles`) supporting connection pooling and exponential backoff.
-- **Windows MAX_PATH Safety**: Automatically checks path lengths and shortens filenames to fit within Windows path length limitations (220 characters headroom), preventing OS errors.
-- **Artist Parsing**: Advanced smart collaborator splitting (`Simon & Garfunkel` is preserved, while individual features/collaborations are correctly parsed and tagged).
+- Reads the CSV reports exported by Soniq Tools.
+- Picks out files flagged as upsampled, transcoded, or lossy transcode, the ones sold as
+  lossless without being lossless.
+- Tries to fetch a real lossless version from whichever sources are configured, Tidal and
+  Apple Music included.
+- Carries the original file's tags across to the new file: lyrics, ratings, replaygain,
+  track IDs.
+- Configured in `healer_config.toml`.
 
----
+## Apple Music module (`modules/applemusic`)
 
-## Getting Started
+- Downloads and decrypts Apple Music audio through the `gamdl` library and your own
+  Widevine device file (`.wvd`).
+- Authenticates with browser cookies from `config/cookies.txt`.
+- Doubles as a fallback source for the healer when a fuzzy match is needed.
 
-### Prerequisites
-* Python 3.9+ (highly recommended)
-* ffmpeg installed and added to your system PATH
+## Core changes
 
-### Installation
-1. Install dependencies:
-   ```shell
-   pip install -r requirements.txt
-   ```
-2. Run the program at least once to initialize settings:
-   ```shell
-   python orpheus.py settings refresh
-   ```
-3. Configure your logins and settings inside `config/settings.json`.
+- Downloads run asynchronously on `aiohttp` and `aiofiles`, with connection pooling and
+  exponential backoff, replacing the synchronous path.
+- Windows path lengths are checked before writing, and filenames are shortened to stay
+  inside the limit with 220 characters of headroom, rather than failing at the OS.
+- Artist parsing splits collaborations without splitting names: `Simon & Garfunkel` stays
+  one artist, while features and collaborations are separated and tagged.
+- Provenance (`orpheus/provenance.py`) records the module, tier, codec, and download time
+  in the file's own tags rather than a side database, because files get moved and renamed
+  and any index keyed by path breaks the moment they do.
 
----
+## Library tools
+
+| Script | What it does |
+|---|---|
+| `quality_probe.py` | Repeatable audio measurements. Reports numbers, hands down no verdict, and stays quiet about anything it cannot prove. |
+| `scan_library.py` | Walks a folder, probes every file, writes one CSV row each plus a FLAC / ALAC / lossy summary |
+| `check_duplicates.py` | Duplicate detection by filename |
+| `tools_dupes_by_tag.py` | Duplicate detection by artist and title tags, which catches what filename matching misses. Keeps the best copy by provenance, then bit depth, sample rate, and size. |
+| `tools_backfill_genre.py` | Fills empty genre tags from the iTunes Search API, then Deezer. The Tidal module never writes a genre. |
+| `tools_build_playlists.py` | Flattens the sorted tree into the library folder and writes m3u8 playlists |
+| `tools_export_playlists.py` | Exports those playlists as txt and csv an Apple Music importer can read, reading artist, title, and album from tags rather than filenames |
+| `tools_relocate_healed.py` | One-off: moves healer output back into its mood folder using the healer session JSON |
+| `analyze_csv.py` | Counts verdicts and formats in a Soniq Tools CSV |
+
+The `tools_*` scripts were written against specific drive layouts and still contain those
+paths. Read the docstring at the top of one before running it.
+
+## Getting started
+
+Requirements: Python 3.9 or newer, and ffmpeg on the PATH.
+
+```shell
+pip install -r requirements.txt
+python orpheus.py settings refresh
+```
+
+The second command writes the initial settings. Then fill in logins and preferences in
+`config/settings.json`.
 
 ## Usage
 
-### 1. General Downloader
-Download albums/tracks directly using a link:
+Download by link:
+
 ```shell
 python orpheus.py https://music.apple.com/us/album/...
 ```
-Or perform a search & download:
+
+Search and download:
+
 ```shell
 python orpheus.py search tidal track "song name" "artist"
 ```
 
-### 2. Orpheus Healer (Auto-repair library)
-Configure your music directory and Soniq Tools CSV paths in `healer_config.toml`, then run:
+Repair a library, after setting the music directory and the Soniq Tools CSV path in
+`healer_config.toml`:
+
 ```shell
 python orpheus_healer.py
 ```
 
----
+Take a quality census:
 
-## Contributing & License
-Refer to the original documentation for licensing. All personal cookie files (`config/cookies.txt`, `config/loginstorage.bin`), download outputs, and session databases are ignored under `.gitignore` for security.
+```shell
+python scan_library.py --target-dir "D:\Music\sorted" --csv report.csv --workers 4
+```
+
+## Tests
+
+Assert-based scripts, run directly:
+
+```shell
+python test_quality_probe.py
+python test_healer.py
+python test_provenance.py
+python test_scan_library.py
+python test_dupes_by_tag.py
+python test_backfill_genre.py
+python test_export_playlists.py
+python test_rename_to_original.py
+```
+
+`docs/superpowers/` holds the design notes behind the quality verification work.
+
+## Licence and secrets
+
+Licensing follows the upstream project. Cookie files (`config/cookies.txt`,
+`config/loginstorage.bin`), download output, and session databases are gitignored, and
+they should stay that way.
